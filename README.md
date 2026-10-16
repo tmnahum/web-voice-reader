@@ -14,7 +14,7 @@ cp .env.example .env
 
 Open http://localhost:28766. On the development machine, the ignored `.env` points to the existing Kokoro runtime and model files in `../voice`; no Readroom code, service, or library is modified. Voicesite has its own server environment, database, audio cache, and source code. The model weights and inference Python environment are currently shared read-only.
 
-For a separate machine, install Kokoro and its English pronunciation dependencies in an inference environment (`kokoro`, `soundfile`, `numpy`, `torch`, `espeakng-loader`, and the English spaCy model required by Misaki). Download `config.json`, `kokoro-v1_0.pth`, and the five voice files (`af_heart`, `af_bella`, `am_michael`, `bf_emma`, `bm_george`) from [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), preserving the `voices/` directory. Set the two paths in `.env`. A reproducible dedicated inference installer is still on the roadmap. Inference disables Hugging Face network access; installing dependencies and obtaining weights requires network access.
+For a separate machine, install Kokoro and its English pronunciation dependencies in an inference environment (`kokoro`, `soundfile`, `numpy`, `torch`, `espeakng-loader`, and the English spaCy model required by Misaki). Download `config.json`, `kokoro-v1_0.pth`, and the four voice files (`af_bella`, `am_michael`, `af_nicole`, `am_eric`) from [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), preserving the `voices/` directory. Set the two paths in `.env`. A reproducible dedicated inference installer is still on the roadmap. Inference disables Hugging Face network access; installing dependencies and obtaining weights requires network access.
 
 ## This first version
 
@@ -23,7 +23,7 @@ For a separate machine, install Kokoro and its English pronunciation dependencie
 - Keep link destinations and text offsets, plus stable references to original page elements.
 - Switch between a quiet reader and a sandboxed saved original page.
 - Choose article plus comments, article only, comments only, or all page text.
-- Read passages with five Kokoro English voices, playback speed, and cached WAV audio. Click a passage to start there.
+- Read passages with four Kokoro English voices (Bella, Michael, Nicole, Eric), playback speed, and cached WAV audio. Click a passage to start there.
 - A built-in sample demonstrates comments and nested replies without fetching a website.
 
 ## Honest capture limits
@@ -58,3 +58,18 @@ node --check static/app.js
 ## Initial validation
 
 10 automated checks pass for comment/reply preservation, repeated-link offsets, source anchors, active-content removal, URL restrictions, persistence, and API validation. A real public-page capture and real Kokoro WAV generation with timing metadata succeeded on the development machine. JavaScript syntax was checked. The collaborative browser returned connection refused for this machine’s loopback URL, so visual/browser interaction testing remains pending.
+
+## Deployment
+
+Public URL: https://voicesite.remoth.net
+
+The `voicesite.service` user service runs the app on `127.0.0.1:28766`, starts automatically, and restarts on failure. The existing remotely managed Cloudflare tunnel `tgl` routes the public hostname to `http://localhost:28766`. Its proxied DNS record targets the same tunnel. Other tunnel routes are preserved.
+
+```bash
+./scripts/install_service.sh
+systemctl --user status voicesite
+systemctl --user restart voicesite
+journalctl --user -u voicesite -f
+```
+
+The initial voices are Bella (default), Michael, Nicole, and Eric. The public deployment currently has no login; anyone with the URL can access the library and request speech.

@@ -23,7 +23,7 @@ with db() as conn:
     conn.execute('CREATE TABLE IF NOT EXISTS pages (id TEXT PRIMARY KEY, title TEXT, created TEXT, document TEXT, snapshot TEXT)')
 app=FastAPI(title='Voicesite')
 lock=asyncio.Lock()
-VOICES={'af_heart':'Heart · American','af_bella':'Bella · American','am_michael':'Michael · American','bf_emma':'Emma · British','bm_george':'George · British'}
+VOICES={'af_bella':'Bella · American','am_michael':'Michael · American','af_nicole':'Nicole · American','am_eric':'Eric · American'}
 CSP="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox"
 @app.middleware('http')
 async def same_origin(request,call_next):
@@ -39,7 +39,7 @@ class CaptureInput(BaseModel):
     url:str=Field(min_length=1,max_length=2048)
 class SpeechInput(BaseModel):
     block_id:str
-    voice:str='af_heart'
+    voice:str='af_bella'
 def save(doc,snapshot):
     ident=uuid.uuid4().hex
     created=datetime.now(timezone.utc).isoformat()
