@@ -1,0 +1,17 @@
+[Unit]
+Description=Voicesite text archive and reader
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tmn/code/voicesite
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=28767
+ExecStart=/home/tmn/.local/bin/node /home/tmn/code/voicesite/server/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

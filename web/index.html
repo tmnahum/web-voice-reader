@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Voicesite — A quieter place for the web</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="/" aria-label="Voicesite home"><span class="brand-icon">▥</span> voicesite<span class="brand-dot">.</span></a><span class="header-note">A little less noise. A little more permanence.</span><a class="library-link" href="/">Your archive <span>↗</span></a></header>
+<main id="main">
+<section id="home">
+<div class="hero"><div class="eyebrow"><span class="dot"></span> SAVE THE PAGE. KEEP THE WORDS.</div><h1>The web moves on.<br><em>Your pages stay.</em></h1><p>Archive a page as it is. Read it without the noise.<br>A personal home for the things worth keeping.</p>
+<form id="capture-form" class="capture-form"><label class="sr-only" for="url-input">Website URL</label><span class="input-icon" aria-hidden="true">↗</span><input id="url-input" type="text" placeholder="Paste a link to save for later…" required autocomplete="url" spellcheck="false"><button type="submit">Archive page <span aria-hidden="true">→</span></button></form>
+<div class="url-tip">Or go straight there: <code><span id="domain"></span>/https://example.com</code></div>
+</div>
+<div class="features"><div><span class="feature-number">01 / PRESERVE</span><h3>A moment, saved.</h3><p>Keep a dated copy, even as the live web changes.</p></div><div><span class="feature-number">02 / FOCUS</span><h3>Just you and the words.</h3><p>Switch from the original page to a clean reader.</p></div><div><span class="feature-number">03 / RETURN</span><h3>Always on your shelf.</h3><p>Revisit your snapshots whenever you need them.</p></div></div>
+<section class="library"><div class="section-heading"><div><span class="eyebrow">YOUR COLLECTION</span><h2>Recently archived <span id="archive-count">0</span></h2></div><label class="search-label"><span aria-hidden="true">⌕</span><input id="search" aria-label="Search your archive" placeholder="Find a saved page"></label></div><div id="archive-list"></div></section>
+<footer>Made for a more thoughtful web.<span>VOICESITE / ARCHIVE & READ</span></footer>
+</section>
+<section id="viewer" hidden>
+<header class="archive-header"><a href="/" class="archive-brand" aria-label="Voicesite home">▥ <strong>voicesite<span>.</span></strong></a><span class="archive-label">Saved page</span><span class="archive-source" id="header-source"></span><a id="header-live-link" target="_blank" rel="noopener noreferrer" aria-label="Open original website">Live site ↗</a></header>
+<nav class="control-bubble" aria-label="Page controls">
+<a class="bubble-home" href="/" aria-label="Back to archive" title="Your archive">▥</a>
+<div class="mode-toggle" role="group" aria-label="Page view"><button id="original-mode" aria-pressed="true">Original</button><button id="reader-mode" aria-pressed="false">Reader</button></div>
+<details id="page-options"><summary aria-label="Page options" title="Page options">•••</summary>
+<div class="options-panel">
+<div class="source-info"><span class="eyebrow" id="source-domain"></span><h1 id="page-title"></h1><p id="capture-date"></p></div>
+<div class="snapshot-picker"><label for="versions">Saved version</label><select id="versions"></select></div>
+<div class="option-actions"><button id="recapture">↻ Save again</button><button id="copy-link">Copy link</button><a id="live-link" target="_blank" rel="noopener noreferrer">Live page ↗</a></div>
+<div class="text-tools" id="reader-tools" hidden><span>Text size</span><button id="smaller" aria-label="Smaller reader text">A−</button><button id="larger" aria-label="Larger reader text">A+</button></div>
+<p class="capture-note" id="capture-note"></p>
+</div></details>
+</nav>
+<article id="reader"><div class="article-meta" id="article-meta"></div><h2 id="reader-title"></h2><div id="reader-content"></div><div class="article-end">◇<p>End of the saved page</p></div></article>
+<iframe id="original" title="Archived original page" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" hidden></iframe>
+</section>
+<section id="loading" hidden aria-live="polite"><div class="spinner"></div><span class="eyebrow">A MOMENT OF PRESERVATION</span><h2>Saving a little piece of the web.</h2><p>Capturing the text, preserving its styles, and finding the words.<br>This can take up to a minute.</p></section>
+<div id="error" role="alert" hidden><strong>We couldn’t save that page.</strong><p id="error-message"></p><button id="dismiss-error">Back to archive</button></div>
+</main><div id="toast" role="status"></div>
+</body></html>

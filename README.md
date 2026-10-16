@@ -1,75 +1,70 @@
 # Voicesite
 
-A self-hosted reading and listening app, separate from Readroom. Speech uses **Kokoro only**, on the server.
+A text-first web archive and reader. Save the words, HTML structure, and CSS of a public page; switch between a clean article view and the saved original formatting. Image URLs, including responsive and common lazy-loaded images, are retained and loaded directly from the original website in both views. CSS background images also use live URLs. Fonts, media, scripts, SVG icons, form controls, and their original styling are retained. Asset bytes other than CSS remain live-linked rather than duplicated in storage. Text and reader content are saved independently of those live assets.
 
-## Start
+## Run
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.lock
-cp .env.example .env
-# Set your Kokoro Python and model directory in .env.
-./scripts/start.sh
+Requires Node.js 24+ and pnpm.
+
+```sh
+pnpm install
+pnpm dev
 ```
 
-Open http://localhost:28766. On the development machine, the ignored `.env` points to the existing Kokoro runtime and model files in `../voice`; no Readroom code, service, or library is modified. Voicesite has its own server environment, database, audio cache, and source code. The model weights and inference Python environment are currently shared read-only.
+Open http://localhost:28767. For a network-accessible preview, run `HOST=0.0.0.0 pnpm start`. `PORT` overrides 28767; `ARCHIVE_DB` overrides `data/archive.sqlite3`. The existing legacy `data/library.sqlite3` and audio files are untouched. The previous Python service has been replaced by the Node service described below.
 
-For a separate machine, install Kokoro and its English pronunciation dependencies in an inference environment (`kokoro`, `soundfile`, `numpy`, `torch`, `espeakng-loader`, and the English spaCy model required by Misaki). Download `config.json`, `kokoro-v1_0.pth`, and the four voice files (`af_bella`, `am_michael`, `af_nicole`, `am_eric`) from [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), preserving the `voices/` directory. Set the two paths in `.env`. A reproducible dedicated inference installer is still on the roadmap. Inference disables Hugging Face network access; installing dependencies and obtaining weights requires network access.
+## Use
 
-## This first version
+- Paste a public URL on the home page, or visit `http://localhost:28767/https://example.com/article?query=value`. A bare domain such as `/example.com/article` also works.
+- The first visit saves a snapshot. Repeat visits open the latest saved copy; **Save again** creates a new dated version.
+- Each snapshot has a permanent `/archive/<id>` URL. The snapshot selector lets you reopen older versions.
+- Pages open in a wide **Original** view beneath a persistent 34px Voicesite / Saved page header, which identifies the source and links to the live site. A compact floating bubble at the bottom switches **Original / Reader**. Its **•••** menu contains versions, Save again, Copy link, the live-page link, and reader text sizing.
+- Older snapshots retain their earlier capture settings. Use **Save again** to create a new snapshot with the current asset-preserving behavior.
+- Reading extraction uses [Mozilla Readability](https://github.com/mozilla/readability), with a sanitized page-content fallback when no article is detected.
 
-- Save a public HTML page to a persistent SQLite library.
-- Preserve text across the whole page, including comments and author labels present in the HTML; retain detected reply indentation.
-- Keep link destinations and text offsets, plus stable references to original page elements.
-- Switch between a quiet reader and a sandboxed saved original page.
-- Choose article plus comments, article only, comments only, or all page text.
-- Read passages with four Kokoro English voices (Bella, Michael, Nicole, Eric), playback speed, and cached WAV audio. Click a passage to start there.
-- A built-in sample demonstrates comments and nested replies without fetching a website.
+## Text and future speech integration
 
-## Honest capture limits
+`GET /api/snapshots/:id` returns article HTML, plain article text, and whole-page `blocks`. Each block includes text, tag type, and an ID that maps to `data-read-id` on the archived original element. Multiple text runs can share an element. This retains a foundation for reading/highlighting text in original formatting without forcing article-only extraction. Speech playback is not implemented in this step. CSS-hidden content may still appear in the block list; a future speech integration should check rendered visibility. The original frame has an opaque origin: future highlighting must use an explicit message bridge, not direct parent DOM access. Source scripts may change element IDs during replay.
 
-This is a **static HTML capture**, not yet full Internet Archive-style browser recording. It saves up to 40 image and stylesheet resources (2 MB each, main HTML 4 MB). Scripts, embedded frames, forms, remote fonts, and CSS background assets are not replayed. CSS external requests are blocked. JavaScript-loaded comments, pagination, authentication, and “load more” require the browser-capture stage below. Every saved document displays these limits. Missing assets are counted.
+`POST /api/capture` accepts `{ "url": "https://example.com", "fresh": false }`. `GET /api/snapshots` lists the latest 100 snapshots; `?url=...` returns all versions for a source. `/snapshots/:id/original` serves the saved original HTML in an opaque-origin sandbox. Original scripts, styles, fonts, images, media, and embeds may load from their original locations. The frame can run scripts and forms but cannot read the parent app DOM, cookies, or storage. Reader HTML is separately sanitized before insertion into the app. External assets depend on source availability, CORS/embedding policy, and hotlink permissions.
 
-Comment detection currently uses common HTML markers such as `comments`, `reply`, and `discussion`; site-specific layouts may be misclassified. All captured text remains available under “All page text.” Reader mode preserves content order but does not yet reconstruct complex tables. Image alt text is retained; OCR and generated image descriptions are not implemented. CSS-hidden text can still enter the reading list. Original-view positioning follows the current playback passage, not arbitrary manual scrolling.
+## Capture limits
 
-Kokoro generates one passage per subprocess, with a single concurrency lock, a 180-second timeout, and persistent audio caching. This initial version reloads the model per uncached passage; a persistent worker, prefetching, recoverable queue, and cancellation are follow-ups. Stopping the player stops playback; a submitted server generation can finish and cache its audio. Word timings are saved, but word highlighting and link effects are not yet connected to the player.
+Capture saves server-returned HTML and CSS; it does not run a browser during capture. Original replay loads source scripts and live assets. Login-only content, anti-bot pages, JavaScript-rendered articles, and dynamically loaded comments may be inaccessible or incomplete. Only the requested page is captured; links open the live destination. Original mode retains visual markup and source behavior, but is not a transparent proxy of the original origin. Login, cookies/local storage, origin-dependent API calls, some embedded frames, and JavaScript-only initial content may not work. The persistent reader text remains usable when live assets or services disappear. Objects requiring browser plugins are not enabled.
 
-## Data and access
+HTML is limited to 5 MB, stylesheets to 2 MB each, 80 stylesheet resources / roughly 25 MB per capture, with a 45-second resource scheduling budget and 12-second individual request timeout. Stylesheets that fail to save (including parsing, size, and time limits) retain their live URL and are reported in the viewer. Nested CSS imports are saved up to four levels; CSS font/image URLs and image-set candidates are resolved to their original stylesheet location; inline data assets and SVG fragment references are retained. Integrity hashes are removed from rewritten stylesheet links so the browser accepts the saved CSS. Two different captures can run concurrently; duplicate in-flight requests share a capture.
 
-`data/library.sqlite3` contains saved HTML and reading blocks. `data/audio/` contains generated speech and timing metadata. Back up `data/` to preserve the library. `.env`, data, models, and environments are Git-ignored.
+Data lives in `data/archive.sqlite3` (SQLite WAL). Back up the data directory while the app is stopped or use SQLite's backup API. No migration of the legacy Python database is performed. The app has a shared library without accounts or quotas; the deployed instance is a shared prototype, not a multi-user archive service.
 
-The service binds to loopback by default. There is no account system; add authentication before exposing a shared deployment. URL captures reject private addresses, validate redirects, and pin DNS. Saved pages have scripts removed, sandboxed frames, and a restrictive content security policy. Cross-origin writes are rejected. Capture requests contact source websites; listening uses local models. No external fonts, analytics, or cloud AI services are used by the app.
+## Verification
 
-## Checks
-
-```bash
-.venv/bin/python -m pytest -q
-node --check static/app.js
+```sh
+pnpm test
+node --check web/app.js
 ```
 
-## Next
-
-1. Browser-based capture and replay, including loaded comment threads, better capture completeness reporting, and full asset preservation.
-2. Persistent Kokoro worker, prefetch, queue/cancel controls, saved reading positions, word highlighting, and configurable link audio effects.
-3. Evaluate locally runnable image description and OCR models against the server hardware; attach results to image blocks and avoid duplicate narration.
-4. Better comment/reply attribution, site adapters, tables, accessibility structure, and original/reader scroll synchronization.
-5. Standalone installation, pinned inference dependencies, authentication, and deployment packaging.
-
-## Initial validation
-
-10 automated checks pass for comment/reply preservation, repeated-link offsets, source anchors, active-content removal, URL restrictions, persistence, and API validation. A real public-page capture and real Kokoro WAV generation with timing metadata succeeded on the development machine. JavaScript syntax was checked. The collaborative browser returned connection refused for this machine’s loopback URL, so visual/browser interaction testing remains pending.
+Tests cover extraction, text references, asset skipping, CSS imports, reader sanitization, original control/SVG/script preservation, CSS live fallback, public-IP filtering, persistent versions, API reuse/recapture, sandbox response headers, responsive/live image URL handling, and versioned frontend asset delivery. The capture client validates public destinations and redirects and pins resolved addresses to the connection.
 
 ## Deployment
 
 Public URL: https://voicesite.remoth.net
 
-The `voicesite.service` user service runs the app on `127.0.0.1:28766`, starts automatically, and restarts on failure. The existing remotely managed Cloudflare tunnel `tgl` routes the public hostname to `http://localhost:28766`. Its proxied DNS record targets the same tunnel. Other tunnel routes are preserved.
+The user systemd unit `voicesite.service` runs Node in production mode on `127.0.0.1:28767`, starts automatically, and restarts on failure. Its definition is in `deploy/voicesite.service`. The existing remotely managed Cloudflare tunnel `tgl` routes this hostname to `http://localhost:28767`; the proxied DNS record targets that tunnel. Other tunnel routes are preserved.
 
-```bash
-./scripts/install_service.sh
+```sh
 systemctl --user status voicesite
 systemctl --user restart voicesite
 journalctl --user -u voicesite -f
 ```
 
-The initial voices are Bella (default), Michael, Nicole, and Eric. The public deployment currently has no login; anyone with the URL can access the library and request speech.
+To reinstall the service on this machine:
+
+```sh
+cp deploy/voicesite.service ~/.config/systemd/user/voicesite.service
+systemctl --user daemon-reload
+systemctl --user enable --now voicesite
+```
+
+The public deployment has a shared library without authentication. Existing saved data is preserved.
+
+Frontend CSS and JavaScript are served from content-hashed `/assets/<hash>/...` URLs with immutable caching; HTML uses `Cache-Control: no-store`. This prevents Cloudflare or browser caches from pairing a new page with an older app bundle.
