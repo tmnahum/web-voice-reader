@@ -1,4 +1,10 @@
 import express from 'express';
+import { createImageReading } from './image-reading.js';
+import { createRenditions, installRenditions } from './renditions.js';
+import { createSpeech } from './speech.js';
+import { readingSurface } from '../web/reading.js';
+import { loadEnvFile } from 'node:process';
+try { loadEnvFile(); } catch {}
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -6,14 +12,38 @@ import { createHash } from 'node:crypto';
 import { capture } from './capture.js';
 import { normalizeUrl } from './fetch.js';
 import { createStore } from './store.js';
+import { installAdmin } from './admin.js';
 
-export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture} = {}) {
+export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture, adminPassword = process.env.ADMIN_PASSWORD, speech = createSpeech(), speechDirectory, resumeSpeech = false, imageReading = createImageReading()} = {}) {
   const app = express();
   app.disable('x-powered-by');
+  app.use('/api/snapshots/:id/speech-renditions', express.json({limit: '8mb'}));
+  app.use('/api/snapshots/:id/image-reading', express.json({limit:'8mb'}));
   app.use(express.json({limit: '16kb'}));
   app.use((req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Referrer-Policy', 'no-referrer'); next(); });
+  const renditions = createRenditions({speech, directory:speechDirectory, resume:resumeSpeech});
+  installRenditions(app, store, renditions);
   const active = new Map();
-  app.get('/api/snapshots', (req, res) => { res.json(store.list(req.query.url ? normalizeUrl(req.query.url) : undefined)); });
+  app.post('/api/snapshots/:id/image-reading', async (req, res) => {
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && ![`http://${req.headers.host}`, `https://${req.headers.host}`].includes(req.headers.origin))) return res.status(403).json({error:'Cross-origin image analysis is not allowed.'});
+    if (!store.get(req.params.id)) return res.status(404).json({error:'Snapshot not found.'});
+    try { res.json(await imageReading.read(req.params.id, req.body?.url)); }
+    catch (error) { res.status(422).json({error:error.message}); }
+  });
+  app.post('/api/speech', async (req, res) => {
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && ![`http://${req.headers.host}`, `https://${req.headers.host}`].includes(req.headers.origin))) return res.status(403).json({error: 'Cross-origin speech is not allowed.'});
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    try { res.json(await speech.generate(req.body, controller.signal)); }
+    catch (error) { if (!res.destroyed) res.status(422).json({error: error.message}); }
+  });
+  const requireAdmin = installAdmin(app, adminPassword);
+  app.get('/api/admin/snapshots', requireAdmin, (req, res) => res.json(store.list()));
+  app.get('/api/snapshots', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (typeof req.query.url === 'string' && req.query.url.trim()) return res.json(store.list(normalizeUrl(req.query.url)));
+    requireAdmin(req, res, next);
+  }, (req, res) => res.json(store.list()));
   app.post('/api/capture', async (req, res) => {
     if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && ![`http://${req.headers.host}`, `https://${req.headers.host}`].includes(req.headers.origin))) return res.status(403).json({error: 'Cross-origin captures are not allowed.'});
     let url;
@@ -24,7 +54,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
       const pending = capturePage(url).then(doc => store.save(doc)).finally(() => active.delete(url));
       active.set(url, pending);
     }
-    try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt}); }
+    try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt, url: doc.url, finalUrl: doc.finalUrl, title: doc.title, wordCount: doc.wordCount}); }
     catch (error) { res.status(422).json({error: error.message || 'This page could not be captured.'}); }
   });
   app.get('/api/snapshots/:id', (req, res) => {
@@ -35,11 +65,23 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
     const doc = store.get(req.params.id); if (!doc) return res.status(404).send('Snapshot not found.');
     res.set('Content-Security-Policy', "default-src https: http: data: blob:; script-src https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; style-src https: http: data: 'unsafe-inline'; img-src https: http: data: blob:; font-src https: http: data:; connect-src https: http: wss: ws:; object-src 'none'; base-uri https: http:; form-action https: http:; sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads");
     res.set('Cache-Control', 'no-store');
-    res.type('html').send(doc.originalHtml);
+    const bridge = `<script>(() => {
+      const send = (type, payload) => parent.postMessage({voicesite: true, type, ...payload}, '*');
+      let buildToken;
+      const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}));
+      addEventListener('message', event => {
+        if (event.source !== parent || !event.data?.voicesite) return;
+        if (event.data.type === 'images') send('images', {urls:surface.images(), token:event.data.token});
+        if (event.data.type === 'build') { buildToken = event.data.token; surface.build(event.data.imageText); }
+        if (event.data.type === 'highlight') surface.highlight(event.data.index, event.data.mode);
+      });
+      send('ready', {});
+    })();</script>`;
+    res.type('html').send(doc.originalHtml + bridge);
   });
   const web = fileURLToPath(new URL('../web/', import.meta.url));
   // Content-addressed URLs prevent a CDN from mixing an old app bundle with new HTML.
-  const assets = ['app.js', 'style.css'].map(name => ({name, body: readFileSync(resolve(web, name))}));
+  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
   const revision = createHash('sha256').update(Buffer.concat(assets.map(a => a.body))).digest('hex').slice(0, 16);
   let shell = readFileSync(resolve(web, 'index.html'), 'utf8');
   for (const asset of assets) {
@@ -58,5 +100,5 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 28767);
-  createApp().listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Voicesite is running at http://localhost:${port}`));
+  createApp({resumeSpeech:true}).listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Voicesite is running at http://localhost:${port}`));
 }
