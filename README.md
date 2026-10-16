@@ -16,10 +16,10 @@ Open http://localhost:28767. For a network-accessible preview, run `HOST=0.0.0.0
 ## Use
 
 - Paste a public URL on the home page, or visit `http://localhost:28767/https://example.com/article?query=value`. A bare domain such as `/example.com/article` also works.
-- The first visit saves a snapshot. Repeat visits open the latest saved copy; **Save again** creates a new dated version.
-- Each snapshot has a permanent `/archive/<id>` URL. The snapshot selector lets you reopen older versions.
-- Pages open in a wide **Original** view beneath a persistent 34px Voicesite / Saved page header, which identifies the source and links to the live site. A compact floating bubble at the bottom switches **Original / Reader**. Its **•••** menu contains versions, Save again, Copy link, the live-page link, and reader text sizing.
-- Older snapshots retain their earlier capture settings. Use **Save again** to create a new snapshot with the current asset-preserving behavior.
+- The first visit saves a snapshot. Repeat visits open the latest saved copy; the header’s refresh button resaves the page. Identical captures update the latest snapshot’s timestamp and retain its URL; changed captures create a new version.
+- The address bar retains the source URL: `/https://example.com/article?query=value`. The version dropdown and Copy link use `#snapshot=<id>` to select a specific version without consuming source query parameters. Existing `/archive/<id>` links still work and are replaced in the address bar with the source URL plus version fragment.
+- Pages open in a wide **Original** view beneath a persistent 34px Voicesite / Saved page header, which shows the page title left-aligned and links to the live site. The header shows the saved date/time as a version dropdown, with a compact resave button beside it. A compact floating bubble at the bottom switches **Original / Reader**. Its **•••** menu contains Copy link, the live-page link, and reader text sizing.
+- Older snapshots retain their earlier capture settings. Use the header’s refresh button to create a new snapshot with the current asset-preserving behavior.
 - Reading extraction uses [Mozilla Readability](https://github.com/mozilla/readability), with a sanitized page-content fallback when no article is detected.
 
 ## Text and future speech integration
@@ -68,3 +68,5 @@ systemctl --user enable --now voicesite
 The public deployment has a shared library without authentication. Existing saved data is preserved.
 
 Frontend CSS and JavaScript are served from content-hashed `/assets/<hash>/...` URLs with immutable caching; HTML uses `Cache-Control: no-store`. This prevents Cloudflare or browser caches from pairing a new page with an older app bundle.
+
+Resave comparison checks the complete captured document (including original HTML, saved CSS, reader output, and metadata), ignoring capture timestamps, download bookkeeping, CSP nonce attributes, and Cloudflare’s known per-request challenge script (Ray ID/timestamp). That script remains in replay HTML; only the comparison excludes it. All other original scripts, CSS, markup, and article content still participate in comparison. It compares against the latest snapshot for the same source URL, not older history. Live-linked asset bytes are not downloaded or compared; changing remote image/script bytes at the same URL is not detectable unless the captured document also changes.

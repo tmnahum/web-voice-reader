@@ -14,15 +14,15 @@
 <footer>Made for a more thoughtful web.<span>VOICESITE / ARCHIVE & READ</span></footer>
 </section>
 <section id="viewer" hidden>
-<header class="archive-header"><a href="/" class="archive-brand" aria-label="Voicesite home">▥ <strong>voicesite<span>.</span></strong></a><span class="archive-label">Saved page</span><span class="archive-source" id="header-source"></span><a id="header-live-link" target="_blank" rel="noopener noreferrer" aria-label="Open original website">Live site ↗</a></header>
+<header class="archive-header"><a href="/" class="archive-brand" aria-label="Voicesite home">▥ <strong>voicesite<span>.</span></strong></a><span class="header-title" id="header-title"></span><label class="archive-label" for="versions">Saved</label><select id="versions" aria-label="Saved page version"></select><button id="recapture" class="header-refresh" aria-label="Resave page" title="Save the page again"><span aria-hidden="true">↻</span></button><a id="header-live-link" target="_blank" rel="noopener noreferrer" aria-label="Open original website"><span>Live site </span>↗</a></header>
 <nav class="control-bubble" aria-label="Page controls">
 <a class="bubble-home" href="/" aria-label="Back to archive" title="Your archive">▥</a>
 <div class="mode-toggle" role="group" aria-label="Page view"><button id="original-mode" aria-pressed="true">Original</button><button id="reader-mode" aria-pressed="false">Reader</button></div>
 <details id="page-options"><summary aria-label="Page options" title="Page options">•••</summary>
 <div class="options-panel">
 <div class="source-info"><span class="eyebrow" id="source-domain"></span><h1 id="page-title"></h1><p id="capture-date"></p></div>
-<div class="snapshot-picker"><label for="versions">Saved version</label><select id="versions"></select></div>
-<div class="option-actions"><button id="recapture">↻ Save again</button><button id="copy-link">Copy link</button><a id="live-link" target="_blank" rel="noopener noreferrer">Live page ↗</a></div>
+
+<div class="option-actions"><button id="copy-link">Copy link</button><a id="live-link" target="_blank" rel="noopener noreferrer">Live page ↗</a></div>
 <div class="text-tools" id="reader-tools" hidden><span>Text size</span><button id="smaller" aria-label="Smaller reader text">A−</button><button id="larger" aria-label="Larger reader text">A+</button></div>
 <p class="capture-note" id="capture-note"></p>
 </div></details>

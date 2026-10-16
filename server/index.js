@@ -24,7 +24,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
       const pending = capturePage(url).then(doc => store.save(doc)).finally(() => active.delete(url));
       active.set(url, pending);
     }
-    try { const doc = await active.get(url); res.json({id: doc.id}); }
+    try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt}); }
     catch (error) { res.status(422).json({error: error.message || 'This page could not be captured.'}); }
   });
   app.get('/api/snapshots/:id', (req, res) => {

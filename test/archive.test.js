@@ -63,7 +63,7 @@ test('persistent snapshot history survives reopening', async () => {
   try {
     let store = createStore(join(dir, 'archive.db'));
     const doc = await capture('https://example.com/story', fakeFetch);
-    const first = store.save(doc); store.save({...doc, capturedAt:'2099-01-01T00:00:00Z'}); store.close();
+    const first = store.save(doc); store.save({...doc, originalHtml:doc.originalHtml + '<!-- changed -->', capturedAt:'2099-01-01T00:00:00Z'}); store.close();
     store = createStore(join(dir, 'archive.db'));
     assert.equal(store.list(doc.url).length, 2);
     assert.equal(store.get(first.id).originalHtml, doc.originalHtml);
@@ -75,7 +75,7 @@ test('persistent snapshot history survives reopening', async () => {
 test('API captures, reuses snapshots, creates new versions, and replays safely', async () => {
   const store = createStore(':memory:');
   let captures = 0;
-  const app = createApp({store, capturePage: async url => {captures++; return capture(url, fakeFetch);}});
+  const app = createApp({store, capturePage: async url => {captures++; const doc = await capture(url, fakeFetch); if (captures > 2) doc.originalHtml += '<!-- updated -->'; return doc;}});
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const post = body => fetch(`${origin}/api/capture`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -85,7 +85,9 @@ test('API captures, reuses snapshots, creates new versions, and replays safely',
     const reused = await (await post({url:'https://example.com/story?q=a%26b'})).json();
     assert.equal(reused.id, first.id); assert.equal(captures,1);
     const second = await (await post({url:'https://example.com/story?q=a%26b',fresh:true})).json();
-    assert.notEqual(second.id, first.id); assert.equal(captures,2);
+    assert.equal(second.id, first.id); assert.equal(second.unchanged,true); assert.equal(captures,2);
+    const third = await (await post({url:'https://example.com/story?q=a%26b',fresh:true})).json();
+    assert.notEqual(third.id, first.id); assert.equal(third.unchanged,false); assert.equal(captures,3);
     const doc = await (await fetch(`${origin}/api/snapshots/${first.id}`)).json();
     assert.ok(doc.blocks.length); assert.equal(doc.originalHtml,undefined);
     const original = await fetch(`${origin}/snapshots/${first.id}/original`);
@@ -159,4 +161,44 @@ test('original markup retains styled controls, SVG, media, scripts, and live sty
   assert.equal(doc.assets.saved,1); assert.equal(doc.assets.missing,1);
   assert.equal(visited.length,3); // HTML + stylesheets; other assets remain live.
   dom.window.close();
+});
+
+
+test('identical captures refresh latest timestamp without duplicating or rewriting older versions', async () => {
+  const store = createStore(':memory:');
+  try {
+    const a = {...await capture('https://example.com/versioned', fakeFetch),capturedAt:'2026-01-01T00:00:00Z'};
+    const first = store.save(a);
+    const identical = store.save({...a,capturedAt:'2026-01-02T00:00:00Z',assets:{...a.assets,bytes:123}});
+    assert.equal(identical.id,first.id); assert.equal(identical.unchanged,true);
+    assert.equal(store.list(a.url).length,1);
+    assert.equal(store.get(first.id).capturedAt,'2026-01-02T00:00:00Z');
+    const b = {...a,originalHtml:a.originalHtml.replace('color', 'background-color'),capturedAt:'2026-01-03T00:00:00Z'};
+    // A script/markup-only change still creates a version even when reader text is identical.
+    b.originalHtml += '<script src="https://example.com/new.js"></script>';
+    const changed = store.save(b);
+    assert.notEqual(changed.id,first.id); assert.equal(changed.unchanged,false);
+    assert.equal(store.get(first.id).originalHtml,a.originalHtml);
+    const reverted = store.save({...a,capturedAt:'2026-01-04T00:00:00Z'});
+    assert.notEqual(reverted.id,first.id); assert.notEqual(reverted.id,changed.id);
+    assert.equal(store.list(a.url).length,3);
+    assert.equal(store.list(a.url)[0].id,reverted.id);
+  } finally {store.close();}
+});
+
+test('Cloudflare request noise and CSP nonces do not create versions; real site changes do', async () => {
+  const store = createStore(':memory:');
+  try {
+    const doc = await capture('https://example.com/request-noise', fakeFetch);
+    const html = (ray, nonce) => doc.originalHtml + `<style nonce="${nonce}">button{color:red}</style><script nonce="${nonce}">window.appVersion=1</script><script>(function(){window.__CF$cv$params={r:'${ray}',t:'${ray}'};var s=document.createElement('script');s.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';})();</script>`;
+    const first = store.save({...doc,originalHtml:html('ray1','nonce1'),capturedAt:'2026-01-01T00:00:00Z'});
+    const second = store.save({...doc,originalHtml:html('ray2','nonce2'),capturedAt:'2026-01-02T00:00:00Z'});
+    assert.equal(second.id,first.id); assert.equal(second.unchanged,true);
+    assert.ok(store.get(first.id).originalHtml.includes('ray2')); // Keep fresh replay code.
+    const changedStyle = store.save({...doc,originalHtml:html('ray3','nonce3').replace('color:red','color:blue'),capturedAt:'2026-01-03T00:00:00Z'});
+    assert.notEqual(changedStyle.id,second.id);
+    const changedScript = store.save({...doc,originalHtml:changedStyle.originalHtml.replace('appVersion=1','appVersion=2'),capturedAt:'2026-01-04T00:00:00Z'});
+    assert.notEqual(changedScript.id,changedStyle.id);
+    assert.equal(store.list(doc.url).length,3);
+  } finally {store.close();}
 });
