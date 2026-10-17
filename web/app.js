@@ -28,6 +28,7 @@ function syncPageTheme() {
 function applyTheme() {
   document.body.classList.toggle('dark-mode', darkMode);
   $('dark-mode').setAttribute('aria-pressed', String(darkMode));
+  $('dark-mode').querySelector('span').textContent = darkMode ? '☾' : '☀';
   $('dark-mode').title = `${darkMode ? 'Turn off' : 'Turn on'} dark mode for this page`;
   syncPageTheme();
 }

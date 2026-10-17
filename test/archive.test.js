@@ -51,7 +51,7 @@ test('capture preserves article, styles, source references, and skips binary ass
   assert.ok(doc.blocks.some(b => b.text === 'Navigation noise'));
   assert.ok(doc.blocks.every(b => doc.originalHtml.includes(`data-read-id="${b.id}"`)));
   assert.equal(doc.assets.saved, 2);
-  assert.deepEqual(calls, ['https://example.com/story','https://example.com/main.css','https://example.com/nested.css']);
+  assert.deepEqual(calls, ['https://example.com/story','https://example.com/main.css','https://example.com/nested.css','https://example.com/favicon.ico']);
 });
 
 test('non HTML responses fail clearly', async () => {
@@ -100,12 +100,12 @@ test('API captures, reuses snapshots, creates new versions, and replays safely',
     assert.equal(shellResponse.headers.get('cache-control'), 'no-store');
     const shell = await shellResponse.text();
     const assets = [...shell.matchAll(/(?:src|href)="(\/assets\/[a-f0-9]+\/[^"]+)"/g)].map(m => m[1]);
-    assert.equal(assets.length, 2);
+    assert.equal(assets.length, 4);
     for (const asset of assets) {
       const response = await fetch(origin + asset);
       assert.equal(response.status, 200);
       assert.match(response.headers.get('cache-control'), /immutable/);
-      assert.ok((await response.text()).length > 1000);
+      assert.ok((await response.arrayBuffer()).byteLength > 100);
     }
     assert.equal((await fetch(origin + '/assets/obsolete/app.js')).status,404);
     assert.equal((await post({url:'file:///etc/passwd'})).status,400);
@@ -159,7 +159,7 @@ test('original markup retains styled controls, SVG, media, scripts, and live sty
   assert.ok(css.includes('url("#mask")'));
   assert.equal(links[1].href,'https://cdn.example.com/resources/missing.css');
   assert.equal(doc.assets.saved,1); assert.equal(doc.assets.missing,1);
-  assert.equal(visited.length,3); // HTML + stylesheets; other assets remain live.
+  assert.equal(visited.length,5); // HTML + stylesheets; other assets remain live.
   dom.window.close();
 });
 

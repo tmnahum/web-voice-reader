@@ -1,6 +1,6 @@
 # Voicesite
 
-A text-first web archive and reader. Save the words, HTML structure, and CSS of a public page; switch between a clean article view and the saved original formatting. Image URLs, including responsive and common lazy-loaded images, are retained and loaded directly from the original website in both views. CSS background images also use live URLs. Fonts, media, scripts, SVG icons, form controls, and their original styling are retained. Asset bytes other than CSS remain live-linked rather than duplicated in storage. Text and reader content are saved independently of those live assets.
+A text-first web archive and reader. Save the words, HTML structure, and CSS of a public page; switch between a clean article view and the saved original formatting. Image URLs, including responsive and common lazy-loaded images, are retained and loaded directly from the original website in both views. CSS background images also use live URLs. Fonts, media, scripts, SVG icons, form controls, and their original styling are retained. Asset bytes other than CSS and favicons remain live-linked rather than duplicated in storage. Text and reader content are saved independently of those live assets.
 
 ## Run
 
@@ -130,3 +130,5 @@ python3 -m venv .venv-effects
 Praat/Parselmouth analyzes the whole clip and uses overlap-add resynthesis with a smooth pitch arch over each marked word's existing pitch contour. Duration changes ramp over 25 ms at each edge. The exact piecewise-linear duration curve is integrated to remap every word boundary, including unmodified words that follow lengthened words. Output length is matched to that mapping; each player and click-to-seek uses its own timestamps. Pitch-tracking errors can still create artifacts, and word-level timing does not identify stressed syllables. Gain and short source-gated echoes follow resynthesis, with soft limiting above −1 dBFS. This is a listening workbench for tuning effects, not a claim of natural prosody.
 
 `pnpm test` includes parser, API validation, cross-origin rejection, and actual processing/timing tests when `.venv-effects` is installed.
+
+Favicons are saved as image bytes with new snapshots and displayed with the Voicesite open-book badge at bottom right. The home page uses a PNG favicon, with an SVG logo and `/favicon.ico` fallback. Older snapshots recover and cache an icon on first view; that recovered icon may differ from the historical one. Resaving captures the current icon. Failed icon captures use the Voicesite icon.

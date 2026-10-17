@@ -1,4 +1,4 @@
-const siteIcon = '/favicon.svg';
+const siteIcon = document.getElementById('favicon').getAttribute('href');
 let generation = 0, controller;
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -15,7 +15,7 @@ export async function setFavicon(snapshotId) {
   controller?.abort();
   controller = new AbortController();
   const link = document.getElementById('favicon');
-  link.type = 'image/svg+xml'; link.href = siteIcon;
+  link.type = 'image/png'; link.href = siteIcon;
   if (!snapshotId) return;
   try {
     const response = await fetch(`/api/snapshots/${encodeURIComponent(snapshotId)}/favicons`, {signal:controller.signal});

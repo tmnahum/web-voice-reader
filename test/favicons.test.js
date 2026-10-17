@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { faviconCandidates, loadFavicons } from '../server/favicons.js';
 import { createStore } from '../server/store.js';
+import { capture } from '../server/capture.js';
 import { createApp } from '../server/index.js';
 
 const doc = {url:'https://example.com/start', finalUrl:'https://www.example.com/story', originalHtml:'<base href="https://cdn.example.com/assets/"><link rel="shortcut ICON" href="brand.ico"><link rel="apple-touch-icon" href="touch.png">'};
@@ -32,14 +33,22 @@ test('data icons need no network request and oversized data is ignored', async (
 test('favicon API handles existing snapshots and shell includes the site favicon', async () => {
   const store = createStore(':memory:');
   const saved = store.save({...doc, capturedAt:new Date().toISOString()});
-  const app = createApp({store, faviconLoader:async page => {assert.equal(page.id, saved.id); return ['data:image/png;base64,aWNvbg=='];}});
+  let requests = 0;
+  const app = createApp({store, faviconLoader:async page => {requests++; assert.equal(page.id, saved.id); return ['data:image/png;base64,aWNvbg=='];}});
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
     const response = await fetch(`${origin}/api/snapshots/${saved.id}/favicons`);
     assert.deepEqual(await response.json(), {icons:['data:image/png;base64,aWNvbg==']});
+    await fetch(`${origin}/api/snapshots/${saved.id}/favicons`);
+    assert.equal(requests, 1, 'legacy icons are recovered once');
     assert.equal((await fetch(`${origin}/api/snapshots/missing/favicons`)).status, 404);
+    for (const path of ['/favicon.png', '/favicon.ico']) {
+      const icon = await fetch(origin + path);
+      assert.equal(icon.headers.get('content-type'), 'image/png');
+      assert.equal(Buffer.from(await icon.arrayBuffer()).subarray(1, 4).toString(), 'PNG');
+    }
     assert.match(await (await fetch(origin)).text(), /id="favicon" rel="icon"/);
     assert.match((await fetch(`${origin}/favicon.svg`)).headers.get('content-type'), /image\/svg\+xml/);
   } finally { await new Promise(resolve => server.close(resolve)); store.close(); }
@@ -80,4 +89,31 @@ test('viewer composes the badge at bottom right and discards icons after navigat
     await dom.window.eval("setFavicon('no-icon')");
     assert.equal(dom.window.document.querySelector('link').getAttribute('href'), '/favicon.svg');
   } finally { dom.window.close(); }
+});
+
+
+test('captures preserve favicon bytes across source changes and API reads never refetch them', async () => {
+  let bytes = 'first icon';
+  const fetcher = async url => url.endsWith('.ico')
+    ? {url, type:'image/x-icon', body:Buffer.from(bytes)}
+    : {url, type:'text/html', body:Buffer.from('<title>Saved</title><p>A saved page</p>')};
+  const first = await capture('https://example.com/', fetcher);
+  bytes = 'changed icon';
+  const second = await capture('https://example.com/', fetcher);
+  assert.notDeepEqual(first.favicons, second.favicons);
+  const store = createStore(':memory:');
+  const saved = store.save(first);
+  assert.notEqual(store.save(second).id, saved.id);
+  const empty = store.save({...first, favicons:[], url:'https://empty.example/'});
+  let requests = 0;
+  const app = createApp({store, faviconLoader:async () => {requests++; return [];}});
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.deepEqual(await (await fetch(`${origin}/api/snapshots/${saved.id}/favicons`)).json(), {icons:first.favicons});
+    assert.deepEqual(await (await fetch(`${origin}/api/snapshots/${empty.id}/favicons`)).json(), {icons:[]});
+    assert.equal(requests, 0);
+    assert.equal(store.list()[0].favicons, undefined, 'history lists omit image bytes');
+  } finally { await new Promise(resolve => server.close(resolve)); store.close(); }
 });

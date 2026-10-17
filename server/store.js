@@ -24,8 +24,11 @@ export function createStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, url TEXT NOT NULL, captured_at TEXT NOT NULL, document TEXT NOT NULL); CREATE INDEX IF NOT EXISTS snapshots_url ON snapshots(url, captured_at);');
-  const summary = row => { const d = JSON.parse(row.document); const {originalHtml, readerHtml, blocks, text, ...meta} = d; return {id: row.id, ...meta}; };
+  db.exec('CREATE TABLE IF NOT EXISTS recovered_favicons (snapshot_id TEXT PRIMARY KEY, icons TEXT NOT NULL)');
+  const summary = row => { const d = JSON.parse(row.document); const {originalHtml, readerHtml, blocks, text, favicons, ...meta} = d; return {id: row.id, ...meta}; };
   return {
+    recoveredFavicons(id) { const row = db.prepare('SELECT icons FROM recovered_favicons WHERE snapshot_id = ?').get(id); return row ? JSON.parse(row.icons) : null; },
+    saveRecoveredFavicons(id, icons) { db.prepare('INSERT OR IGNORE INTO recovered_favicons VALUES (?, ?)').run(id, JSON.stringify(icons)); },
     save(doc) {
       db.exec('BEGIN IMMEDIATE');
       try {

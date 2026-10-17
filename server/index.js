@@ -64,12 +64,17 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   app.get('/api/snapshots/:id/favicons', async (req, res) => {
     const doc = store.get(req.params.id);
     if (!doc) return res.status(404).json({error:'Snapshot not found.'});
-    const icons = await faviconLoader(doc);
+    // Legacy snapshots never saved icon bytes. Recover once, without changing history.
+    let icons = doc.favicons ?? store.recoveredFavicons(doc.id);
+    if (!icons) {
+      icons = await faviconLoader(doc);
+      if (icons.length) store.saveRecoveredFavicons(doc.id, icons);
+    }
     res.set('Cache-Control', 'private, max-age=3600').json({icons});
   });
   app.get('/api/snapshots/:id', (req, res) => {
     const doc = store.get(req.params.id); if (!doc) return res.status(404).json({error: 'Snapshot not found.'});
-    const {originalHtml, ...data} = doc; res.json(data);
+    const {originalHtml, favicons, ...data} = doc; res.json(data);
   });
   app.get('/snapshots/:id/original', (req, res) => {
     const doc = store.get(req.params.id); if (!doc) return res.status(404).send('Snapshot not found.');
@@ -108,17 +113,18 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   });
   const web = fileURLToPath(new URL('../web/', import.meta.url));
   // Content-addressed URLs prevent a CDN from mixing an old app bundle with new HTML.
-  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
+  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js', 'favicon.png', 'favicon.svg'].map(name => ({name, body: readFileSync(resolve(web, name))}));
   const revision = createHash('sha256').update(Buffer.concat(assets.map(a => a.body))).digest('hex').slice(0, 16);
   let shell = readFileSync(resolve(web, 'index.html'), 'utf8');
   for (const asset of assets) {
     const path = `/assets/${revision}/${asset.name}`;
     shell = shell.replace(`"/${asset.name}"`, `"${path}"`);
-    app.get(path, (req, res) => res.set('Cache-Control', 'public, max-age=31536000, immutable').type(asset.name.endsWith('.js') ? 'js' : 'css').send(asset.body));
+    app.get(path, (req, res) => res.set('Cache-Control', 'public, max-age=31536000, immutable').type(asset.name.split('.').pop()).send(asset.body));
   }
   const sendShell = (req, res) => res.set('Cache-Control', 'no-store').type('html').send(shell);
   app.get(['/', '/index.html'], sendShell);
   app.get(['/effect-studio', '/effect-studio/'], (req, res) => res.set('Cache-Control','no-store').sendFile(resolve(web, 'studio.html')));
+  app.get('/favicon.ico', (req, res) => res.type('png').sendFile(resolve(web, 'favicon.png')));
   app.use(express.static(web, {index: false, setHeaders: res => res.set('Cache-Control', 'no-cache')}));
   app.get('/assets/{*path}', (req, res) => res.status(404).send('Asset not found. Reload the page.'));
   app.get('/api/{*path}', (req, res) => res.status(404).json({error: 'Not found.'}));

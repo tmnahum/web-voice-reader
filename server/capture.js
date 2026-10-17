@@ -3,6 +3,7 @@ import createDOMPurify from 'dompurify';
 import { Readability } from '@mozilla/readability';
 import postcss from 'postcss';
 import valueParser from 'postcss-value-parser';
+import { loadFavicons } from './favicons.js';
 import { fetchPublic } from './fetch.js';
 import { imageUrl, prepareImages } from './images.js';
 
@@ -118,6 +119,7 @@ export async function capture(url, fetcher = fetchPublic) {
   viewport.name = 'viewport'; viewport.content = 'width=device-width, initial-scale=1'; document.head.append(viewport);
   const spacer = document.createElement('div');
   spacer.setAttribute('aria-hidden', 'true'); spacer.style.cssText = 'height:100px;clear:both;pointer-events:none'; document.body.append(spacer);
-  const result = { captureVersion: 3, url, finalUrl: response.url, title, byline: article?.byline || '', excerpt: article?.excerpt || text.slice(0, 180), readerHtml, text, blocks, originalHtml: dom.serialize(), wordCount: text.split(/\s+/).filter(Boolean).length, readerFallback: !article, assets: { saved: [...cache.values()].filter(v => v.startsWith('data:text/css;')).length, missing, bytes }, capturedAt: new Date().toISOString() };
+  const favicons = await loadFavicons({url, finalUrl:response.url, originalHtml:html}, fetcher);
+  const result = { favicons, captureVersion: 3, url, finalUrl: response.url, title, byline: article?.byline || '', excerpt: article?.excerpt || text.slice(0, 180), readerHtml, text, blocks, originalHtml: dom.serialize(), wordCount: text.split(/\s+/).filter(Boolean).length, readerFallback: !article, assets: { saved: [...cache.values()].filter(v => v.startsWith('data:text/css;')).length, missing, bytes }, capturedAt: new Date().toISOString() };
   readerDom.window.close(); dom.window.close(); return result;
 }

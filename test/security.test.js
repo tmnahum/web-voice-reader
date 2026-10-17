@@ -57,7 +57,7 @@ test('capture never executes scripts or fetches embedded browser resources on th
     calls.push(url);
     return {url, type:'text/html',body:Buffer.from(`<title>Untrusted</title><script>throw new Error('source script executed')</script><script src="http://127.0.0.1/admin"></script><iframe src="http://169.254.169.254/"></iframe><img src="file:///etc/passwd"><p>Saved text</p>`) };
   });
-  assert.deepEqual(calls, ['https://example.com']);
+  assert.deepEqual(calls, ['https://example.com', 'https://example.com/favicon.ico']);
   assert.match(doc.originalHtml, /source script executed/);
   assert.ok(!doc.readerHtml.includes('<script'));
 });
