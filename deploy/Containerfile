@@ -1,0 +1,33 @@
+FROM docker.io/library/node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv chromium xvfb libsndfile1 espeak-ng ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/inference && python3 -m venv /opt/effects \
+    && /opt/inference/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/effects/bin/pip install --no-cache-dir --upgrade pip
+RUN /opt/inference/bin/pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
+COPY deploy/python-requirements.txt /tmp/python-requirements.txt
+RUN /opt/inference/bin/pip install --no-cache-dir -r /tmp/python-requirements.txt \
+    && /opt/inference/bin/pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+COPY server/effects-requirements.txt /tmp/effects-requirements.txt
+RUN /opt/effects/bin/pip install --no-cache-dir -r /tmp/effects-requirements.txt
+# Provision OCR resources in the image, not by downloading during public requests.
+RUN /opt/inference/bin/python -c "from rapidocr import RapidOCR, LangRec; RapidOCR(params={'Rec.lang_type': LangRec.EN})"
+RUN npm install -g pnpm@10.18.3
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+COPY server ./server
+COPY web ./web
+COPY deploy/container-check.mjs ./deploy/container-check.mjs
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=28767 \
+    ARCHIVE_DB=/data/archive.sqlite3 SPEECH_DIR=/data/speech \
+    IMAGE_READING_DIR=/data/image-reading BROWSER_STATE_DIR=/data/browser-state \
+    KOKORO_PYTHON=/opt/inference/bin/python KOKORO_MODELS=/models/kokoro \
+    IMAGE_PYTHON=/opt/inference/bin/python IMAGE_CAPTION_MODEL=/models/blip-image-captioning-base \
+    EFFECTS_PYTHON=/opt/effects/bin/python BROWSER_EXECUTABLE=/usr/bin/chromium \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HOME=/tmp/home \
+    OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4
+USER 1000:1000
+EXPOSE 28767
+CMD ["node", "server/index.js"]

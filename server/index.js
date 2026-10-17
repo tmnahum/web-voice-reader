@@ -1,3 +1,4 @@
+import { archiveLinks } from '../web/archive-links.js';
 import { installVerification } from './browser-verification.js';
 import { captureDiagnostics } from './diagnostics.js';
 import { installEffects } from './effects.js';
@@ -101,6 +102,7 @@ export function createApp({verificationManager, store = createStore(process.env.
         if (event.source !== parent || !event.data?.voicesite || event.data.type !== 'theme') return;
         if (event.data.dark === true) document.head.append(themeStyle); else themeStyle.remove();
       });
+      (${archiveLinks.toString()})(document, document.baseURI, location.origin, path => send('navigate', {path}));
       let buildToken;
       const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}), enabled => send('follow', {enabled}));
       addEventListener('message', event => {
@@ -118,7 +120,7 @@ export function createApp({verificationManager, store = createStore(process.env.
   });
   const web = fileURLToPath(new URL('../web/', import.meta.url));
   // Content-addressed URLs prevent a CDN from mixing an old app bundle with new HTML.
-  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js', 'favicon.png', 'favicon.svg', 'verification.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
+  const assets = ['app.js', 'archive-links.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js', 'favicon.png', 'favicon.svg', 'verification.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
   const revision = createHash('sha256').update(Buffer.concat(assets.map(a => a.body))).digest('hex').slice(0, 16);
   let shell = readFileSync(resolve(web, 'index.html'), 'utf8');
   for (const asset of assets) {

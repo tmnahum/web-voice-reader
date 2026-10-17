@@ -106,6 +106,70 @@ Tests cover extraction, text references, asset skipping, CSS imports, reader san
 
 Public URL: https://voicesite.remoth.net
 
+### Prepared container migration
+
+The restricted Podman deployment is prepared in `deploy/Containerfile` and
+`deploy/deploy.py`. **The live site still uses the original `tmn` service until
+the account bootstrap and initial migration below have completed.** The hosting
+account cannot be created from an agent session without administrator authentication.
+
+Run this one-time command in a local terminal (review the script first):
+
+```sh
+sudo bash /home/tmn/.agents/skills/cloudflare-tunnel-deploy/scripts/bootstrap-hosting.sh voicesite 16
+```
+
+It creates the shared `hosting` account, installs the `hosting <command>` helper,
+sets account-level private-network egress restrictions, and mounts a bounded 16 GiB
+data filesystem. `tmn` can administer `hosting` without giving `hosting` root
+privileges. The helper and firewall are shared infrastructure; the data volume
+belongs only to Voicesite. The bootstrap does not move or restart the current app.
+
+Then, as `tmn`, from this checkout:
+
+```sh
+python3 deploy/deploy.py --migrate
+```
+
+This builds with cached dependencies, copies model weights into the hosting
+project directory, and checks Chrome, speech, effects, OCR, captioning, and HTTP
+startup with disposable data. It then stops the old writer for the final data copy,
+starts the hosting Quadlet on the same `127.0.0.1:28767` port, and verifies the
+existing public URL. The old service is disabled only after success. On cutover
+failure the script restores the prior service. Original data is retained. A
+partially copied migration destination requires inspection before retrying.
+
+Normal live updates require one command, without root or tunnel edits:
+
+```sh
+python3 deploy/deploy.py
+# Also exercise the browser and inference workers after related changes:
+python3 deploy/deploy.py --full-check
+```
+
+The container uses a read-only root filesystem, a non-root user, dropped
+capabilities, no-new-privileges, 6 GiB memory (no additional swap), four CPUs, 512
+processes, bounded logs/tmpfs, and project-only data/model mounts. Chrome keeps its
+own sandbox. Its seccomp profile is derived from the installed Podman default,
+with only `chroot` additionally allowed for Chrome's nested user namespace; no
+container capability is added. Application secrets stay outside the image.
+
+Manage the migrated service from `tmn` with `hosting systemctl --user status
+voicesite`, `hosting podman logs --tail 80 voicesite`, or `hosting podman ps`. Its
+Quadlet lives in `/home/hosting/.config/containers/systemd/voicesite.container`;
+the previous configuration is saved alongside it as `.previous`. Images are
+retained for rollback; periodically remove only obsolete Voicesite images/build
+cache after confirming the live and previous image IDs. Do not prune unrelated
+projects. Anonymous processing still needs application-level abuse controls;
+container limits contain its host resource impact rather than provide user quotas.
+
+The account's firewall and mounted disk quota must be checked after bootstrap;
+their host enforcement cannot be verified before that root-only step. Initial
+container worker tests can run under `tmn` without promoting or exposing the test
+container. They do not prove the future hosting account's egress policy.
+
+### Original service (before migration / rollback)
+
 The user systemd unit `voicesite.service` runs Node in production mode on `127.0.0.1:28767`, starts automatically, and restarts on failure. Its definition is in `deploy/voicesite.service`. The existing remotely managed Cloudflare tunnel `tgl` routes this hostname to `http://localhost:28767`; the proxied DNS record targets that tunnel. Other tunnel routes are preserved.
 
 ```sh

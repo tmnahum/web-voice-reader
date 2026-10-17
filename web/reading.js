@@ -119,6 +119,7 @@ export function readingSurface(root, onWords, onClick, onFollowChange = () => {}
     keepInView(ranges[index].range);
   }
   function click(event) {
+    if (event.target.closest?.('a[href], area[href]')) return;
     if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || !getSelection().isCollapsed) return;
     const index = ranges.findIndex(({range, image}) => image === event.target || [...range.getClientRects()].some(r => event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom));
     if (index < 0) return;

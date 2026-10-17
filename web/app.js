@@ -1,3 +1,4 @@
+import { archiveLinks } from './archive-links.js';
 import { verifyCapture } from './verification.js';
 import { setFavicon } from './favicon.js';
 import { createPlayer } from './player.js';
@@ -20,6 +21,7 @@ function rememberArchive(doc) {
   try { localStorage.setItem(LOCAL_ARCHIVE_KEY, JSON.stringify(localFallback)); } catch { localUnavailable = true; notify('Browser storage is unavailable; this list will last for this visit only.'); }
 }
 const $ = id => document.getElementById(id);
+let releaseArchiveLinks;
 let snapshots = [], current = null, mode = 'original', routeVersion = 0, saving = false;
 let darkMode = false;
 try { darkMode = localStorage.getItem('voicesite.darkMode') === 'true'; } catch {}
@@ -39,7 +41,9 @@ $('dark-mode').onclick = () => {
 };
 $('original').addEventListener('load', syncPageTheme);
 window.addEventListener('message', event => {
-  if (event.source === $('original').contentWindow && event.data?.voicesite && event.data.type === 'ready') syncPageTheme();
+  if (event.source !== $('original').contentWindow || !event.data?.voicesite) return;
+  if (event.data.type === 'ready') syncPageTheme();
+  if (event.data.type === 'navigate' && typeof event.data.path === 'string' && /^\/https?:\/\//.test(event.data.path)) navigate(event.data.path);
 });
 applyTheme();
 // Appearance controls remain usable even if audio initialization fails.
@@ -101,7 +105,9 @@ async function showSnapshot(id, version, preserveView = false) {
   closeUrlEditor();
   $('header-live-link').href = doc.finalUrl;
   $('article-meta').textContent = [doc.byline, `${Math.max(1, Math.ceil(doc.wordCount / 220))} min read`, `${doc.wordCount.toLocaleString()} words`].filter(Boolean).join(' · ');
+  releaseArchiveLinks?.();
   $('reader-content').innerHTML = doc.readerHtml;
+  releaseArchiveLinks = archiveLinks($('reader-content'), doc.finalUrl, location.origin, navigate);
   $('versions').replaceChildren(...versions.map(v => { const option = document.createElement('option'); option.value = v.id; option.textContent = date(v.capturedAt); option.title = new Date(v.capturedAt).toString(); option.selected = v.id === id; return option; }));
   $('versions').title = `Saved ${new Date(doc.capturedAt).toString()}`;
   if (!preserveView || !samePage) $('original').removeAttribute('src');

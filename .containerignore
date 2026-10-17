@@ -1,0 +1,11 @@
+**
+!package.json
+!pnpm-lock.yaml
+!server
+!server/**
+!web
+!web/**
+!deploy
+!deploy/Containerfile
+!deploy/python-requirements.txt
+!deploy/container-check.mjs

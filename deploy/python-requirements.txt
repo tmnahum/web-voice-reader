@@ -1,0 +1,8 @@
+kokoro==0.9.4
+espeakng-loader==0.2.4
+soundfile==0.14.0
+numpy==1.26.4
+transformers==4.57.3
+rapidocr==3.4.1
+onnxruntime==1.23.2
+Pillow==12.3.0
