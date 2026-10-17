@@ -125,7 +125,27 @@ export function readingSurface(root, onWords, onClick, onFollowChange = () => {}
     event.preventDefault(); event.stopPropagation(); onClick(index);
   }
   root.addEventListener('click', click, true);
-  return {build, images, highlight, setFollowing, destroy() {
+  function anchor() {
+    const height = view.innerHeight;
+    const index = ranges.findIndex(({range}) => {
+      const rect = range.getBoundingClientRect();
+      return rect.height && rect.top >= 55 && rect.top < height;
+    });
+    return index < 0 ? null : {index, top:ranges[index].range.getBoundingClientRect().top};
+  }
+  function restore(anchor) {
+    const range = ranges[anchor?.index]?.range;
+    if (!range) return;
+    let element = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    for (; element && element !== document.body && element !== document.documentElement; element = element.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight) {
+        element.scrollBy({top:range.getBoundingClientRect().top - Math.max(element.getBoundingClientRect().top + 24, anchor.top), behavior:'instant'});
+      }
+    }
+    view.scrollBy({top:range.getBoundingClientRect().top - anchor.top, behavior:'instant'});
+    lastScroll = -Infinity;
+  }
+  return {build, images, highlight, setFollowing, anchor, restore, destroy() {
     listeners.forEach(([type, handler]) => view.removeEventListener(type, handler, true));
     root.removeEventListener('click', click, true); highlight(-1); style.remove();
   }};
@@ -172,4 +192,27 @@ export function formatReadingTime(seconds) {
   const value = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(value / 3600), minutes = Math.floor(value / 60) % 60;
   return `${hours ? `${hours}:${String(minutes).padStart(2, '0')}` : minutes}:${String(value % 60).padStart(2, '0')}`;
+}
+
+// Match surrounding text as well as the word, so repeated headings and common
+// words map to the article rather than navigation stripped by reader mode.
+export function mapReadingWords(source, target) {
+  if (source.length === target.length && source.every((word, i) => word.text === target[i].text)) return source.map((_, i) => i);
+  const occurrences = new Map();
+  target.forEach((word, i) => {
+    const list = occurrences.get(word.text) || [];
+    list.push(i); occurrences.set(word.text, list);
+  });
+  return source.map((word, i) => {
+    let best = -1, score = -Infinity;
+    for (const candidate of occurrences.get(word.text) || []) {
+      let value = 0;
+      for (let offset = -4; offset <= 4; offset++) {
+        if (source[i + offset] && source[i + offset].text === target[candidate + offset]?.text) value += 5 - Math.abs(offset);
+      }
+      value -= Math.abs(i / source.length - candidate / target.length) * .1;
+      if (value > score) { score = value; best = candidate; }
+    }
+    return best;
+  });
 }

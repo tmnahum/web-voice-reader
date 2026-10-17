@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readingSurface } from '../web/reading.js';
+import { readingSurface, mapReadingWords } from '../web/reading.js';
 
 test('reading follows words near viewport edges without repeatedly scrolling or moving centered words', () => {
   const dom = new JSDOM('<article><p>One two three four five.</p></article>');
@@ -65,6 +65,10 @@ test('reading follows words near viewport edges without repeatedly scrolling or 
     document.body.append(input);
     input.dispatchEvent(new view.KeyboardEvent('keydown', {key:'ArrowDown', bubbles:true}));
     assert.equal(changes.at(-1),true);
+    top = 180;
+    assert.deepEqual(surface.anchor(), {index:0, top:180});
+    surface.restore({index:0, top:95});
+    assert.deepEqual(calls.at(-1), {top:85, behavior:'instant'});
     surface.destroy();
     view.dispatchEvent(new view.WheelEvent('wheel', {deltaY:100}));
     assert.equal(changes.at(-1),true); // Destroy removes input listeners.
@@ -72,4 +76,15 @@ test('reading follows words near viewport edges without repeatedly scrolling or 
     for(const [key,descriptor] of original) { if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]; }
     dom.window.close();
   }
+});
+
+test('view mapping follows article context past removed navigation and repeated words', () => {
+  const words = text => text.split(' ').map(text => ({text}));
+  const original = words('Home News Read this story now Title Read this story about science today Footer');
+  const reader = words('Title Read this story about science today');
+  const mapped = mapReadingWords(original, reader);
+  assert.deepEqual(mapped.slice(6, 13), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(mapReadingWords(reader, original), [6, 7, 8, 9, 10, 11, 12]);
+  assert.equal(mapped[0], -1);
+  assert.deepEqual(mapReadingWords(reader, reader), [0, 1, 2, 3, 4, 5, 6]);
 });

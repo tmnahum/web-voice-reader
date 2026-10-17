@@ -107,6 +107,8 @@ export function createApp({verificationManager, store = createStore(process.env.
         if (event.source !== parent || !event.data?.voicesite) return;
         if (event.data.type === 'images') send('images', {urls:surface.images(), token:event.data.token});
         if (event.data.type === 'build') { buildToken = event.data.token; surface.build(event.data.imageText); }
+        if (event.data.type === 'anchor') send('anchor', {anchor:surface.anchor(), token:event.data.token});
+        if (event.data.type === 'restore') surface.restore(event.data.anchor);
         if (event.data.type === 'highlight') surface.highlight(event.data.index, event.data.mode);
         if (event.data.type === 'follow') surface.setFollowing(event.data.enabled === true);
       });

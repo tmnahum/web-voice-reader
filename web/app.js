@@ -29,7 +29,6 @@ function syncPageTheme() {
 function applyTheme() {
   document.body.classList.toggle('dark-mode', darkMode);
   $('dark-mode').setAttribute('aria-pressed', String(darkMode));
-  $('dark-mode').querySelector('span').textContent = darkMode ? '☾' : '☀';
   $('dark-mode').title = `${darkMode ? 'Turn off' : 'Turn on'} dark mode for this page`;
   syncPageTheme();
 }
@@ -109,7 +108,6 @@ async function showSnapshot(id, version, preserveView = false) {
   setMode(preserveView ? mode : 'original'); screen('viewer');
 }
 function setMode(next) {
-  player.reset();
   mode = next;
   document.body.classList.toggle('original-view', next === 'original');
   $('reader').hidden = next !== 'reader'; $('original').hidden = next !== 'original';
@@ -188,7 +186,16 @@ window.addEventListener('storage', e => { if ((!e.key || e.key === LOCAL_ARCHIVE
 $('domain').textContent = location.host;
 $('capture-form').addEventListener('submit', e => { e.preventDefault(); saveUrl($('url-input').value); });
 $('search').addEventListener('input', () => renderLibrary());
-$('reader-mode').onclick = () => setMode(mode === 'reader' ? 'original' : 'reader');
+let switchingView = false;
+$('reader-mode').onclick = async () => {
+  if (switchingView) return;
+  switchingView = true;
+  const page = current;
+  try {
+    await player.capturePosition();
+    if (page === current) setMode(mode === 'reader' ? 'original' : 'reader');
+  } finally { switchingView = false; }
+};
 function closeUrlEditor(focus = false) {
   $('header-url-form').hidden = true;
   $('header-title').hidden = false;

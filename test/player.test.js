@@ -4,8 +4,12 @@ import { JSDOM } from 'jsdom';
 import { createPlayer } from '../web/player.js';
 
 async function setup(t) {
-  const dom = new JSDOM(`<iframe id="original"></iframe>${['play', 'follow-narration', 'generate-speech', 'toast', 'read-time', 'voice', 'speed-presets', 'speed', 'slower', 'faster'].map(id => `<button id="${id}"></button>`).join('')}`);
-  const clips = [];
+  const dom = new JSDOM(`<article id="reader">Title Hello world</article><iframe id="original"></iframe>${['play', 'follow-narration', 'generate-speech', 'toast', 'read-time', 'voice', 'speed-presets', 'speed', 'slower', 'faster'].map(id => `<button id="${id}"></button>`).join('')}`);
+  const clips = [], frames = new Map();
+  let frameId = 0;
+  dom.window.Element.prototype.getClientRects = () => [{}];
+  dom.window.Range.prototype.getBoundingClientRect = () => ({top:300,bottom:320,width:40,height:20});
+  dom.window.scrollBy = () => {};
   class Audio {
     paused = true;
     ended = false;
@@ -26,7 +30,10 @@ async function setup(t) {
   const rendition = {id:'test', status:'complete', chunks:[{start:0, ready:true}, {start:1, ready:true}]};
   const globals = {
     window:dom.window, document:dom.window.document, Audio,
-    requestAnimationFrame:() => 1, cancelAnimationFrame:() => {},
+    NodeFilter:dom.window.NodeFilter, CSS:{highlights:new Map()},
+    getComputedStyle:dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame:callback => { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame:id => frames.delete(id),
     setTimeout:() => 1, clearTimeout:() => {},
     fetch:async url => ({ok:true, json:async () => url.includes('/chunks/')
       ? {audio:'', duration:1, words:[{index:0, start:0, end:1}]}
@@ -54,7 +61,7 @@ async function setup(t) {
   await flush();
   assert.equal(clips.length, 1);
   assert.equal(button.getAttribute('aria-label'), 'Pause reading');
-  return {player, clips, button, message, follow:dom.window.document.getElementById('follow-narration')};
+  return {player, clips, button, message, runFrame:() => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); }, follow:dom.window.document.getElementById('follow-narration')};
 }
 
 async function flush() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
@@ -113,4 +120,45 @@ test('follow button reflects manual scrolling and resumes following in archived 
   message({type:'follow', enabled:false});
   player.reset();
   assert.equal(follow.hidden, true);
+});
+
+for (const paused of [false, true]) {
+  test(`reader toggle preserves the same audio and time while ${paused ? 'paused' : 'playing'}`, async t => {
+    const {player, clips, button, message, runFrame} = await setup(t);
+    clips[0].currentTime = .45;
+    if (paused) await button.onclick();
+    player.setMode('reader'); runFrame(); await flush();
+    assert.equal(clips.length, 1);
+    assert.equal(clips[0].currentTime, .45);
+    assert.equal(clips[0].paused, paused);
+    assert.equal(button.disabled, false);
+    player.setMode('original'); runFrame(); await flush();
+    message({type:'images', token:6, urls:[]}); await flush();
+    message({type:'words', token:6, words:[{text:'Hello', sentence:0}, {text:'world', sentence:0}]});
+    await flush();
+    assert.equal(clips.length, 1);
+    assert.equal(clips[0].currentTime, .45);
+    assert.equal(clips[0].paused, paused);
+    if (paused) await button.onclick();
+    clips[0].finish(); await flush();
+    assert.equal(clips.length, 2);
+    assert.equal(clips[1].paused, false);
+  });
+}
+
+test('a view switch transfers the visible text anchor and preserves manual follow mode', async t => {
+  const {player, message, runFrame, follow} = await setup(t);
+  const original = document.getElementById('original');
+  const sent = [];
+  original.contentWindow.postMessage = data => sent.push(data);
+  message({type:'follow', enabled:false});
+  const capture = player.capturePosition();
+  const request = sent.find(data => data.type === 'anchor');
+  message({type:'anchor', token:request.token, anchor:{index:1, top:125}});
+  await capture;
+  const scrolls = [];
+  window.scrollBy = options => scrolls.push(options);
+  player.setMode('reader'); runFrame(); await flush();
+  assert.deepEqual(scrolls.at(-1), {top:175, behavior:'instant'});
+  assert.equal(follow.hidden, false);
 });

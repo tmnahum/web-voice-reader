@@ -1,4 +1,4 @@
-import { readingSurface, readingProgress, formatReadingTime } from './reading.js';
+import { readingSurface, readingProgress, formatReadingTime, mapReadingWords } from './reading.js';
 import { addLinkEcho } from './link-audio.js';
 const $ = id => document.getElementById(id);
 async function api(url, body) {
@@ -12,7 +12,42 @@ export function createPlayer() {
   let snapshot, mode = 'original', surface, words = [], index = 0, generation = 0, context = 0;
   let running = false, paused = false, speed = 1, audio, frame, objectUrl, poll;
   let rendition, loadingRendition, clip = 0, currentWords = [], pending = new Map();
-  let following = true;
+  let following = true, viewWords = [], toView = [], fromView = [], speechMode = mode;
+  let imageCache = Object.create(null);
+  let savedAnchor = null, anchorRequest = null, anchorToken = 0;
+  const send = data => $('original').contentWindow?.postMessage({voicesite:true,...data}, '*');
+  function mappedAnchor(anchor) {
+    if (!anchor) return null;
+    let mapped = fromView[anchor.index] ?? -1;
+    for (let i = anchor.index; mapped < 0 && i < fromView.length; i++) mapped = fromView[i];
+    return mapped >= 0 ? {...anchor, index:mapped, top:anchor.top + (mode === 'original' ? $('original').getBoundingClientRect().top : 0)} : null;
+  }
+  async function capturePosition() {
+    if (!viewWords.length) return;
+    if (mode === 'reader') savedAnchor = mappedAnchor(surface?.anchor());
+    else savedAnchor = await new Promise(resolve => {
+      const token = ++anchorToken;
+      const timeout = setTimeout(() => { anchorRequest = null; resolve(null); }, 250);
+      anchorRequest = value => { clearTimeout(timeout); anchorRequest = null; resolve(mappedAnchor(value)); };
+      send({type:'anchor', token});
+    });
+  }
+  function viewRead(at) { const mapped = fromView[at]; if (mapped >= 0) start(mapped); }
+  function restoreView() {
+    const anchor = savedAnchor || (running && following ? {index, top:window.innerHeight * .4} : null);
+    if (mode === 'reader') surface?.setFollowing(following);
+    else send({type:'follow', enabled:following});
+    if (anchor) {
+      let mapped = toView[anchor.index] ?? -1;
+      for (let offset = 1; mapped < 0 && offset < toView.length; offset++) {
+        mapped = toView[anchor.index + offset] ?? -1;
+        if (mapped < 0) mapped = toView[anchor.index - offset] ?? -1;
+      }
+      const target = {...anchor, index:mapped, top:anchor.top - (mode === 'original' ? $('original').getBoundingClientRect().top : 0)};
+      if (mode === 'reader') surface?.restore(target); else send({type:'restore', anchor:target});
+    }
+    if (running) highlight(index);
+  }
   function followChanged(value) { following = value; $('follow-narration').hidden = !running || following; }
   function followNarration() {
     followChanged(true);
@@ -28,13 +63,14 @@ export function createPlayer() {
     setTimeout(() => $('toast').classList.remove('visible'), 4000);
   }
   function highlight(i) {
+    i = i < 0 ? -1 : (toView[i] ?? -1);
     if (mode === 'reader') surface?.highlight(i, 'word');
     else $('original').contentWindow?.postMessage({voicesite:true,type:'highlight',index:i,mode:'word'}, '*');
   }
   function button() { $('play').textContent = running && !paused ? 'Ⅱ' : '▶'; $('play').setAttribute('aria-label', running && !paused ? 'Pause reading' : 'Read aloud'); }
   function renderReadTime() {
     const estimate = $('read-time');
-    if (preparing || !words.length) {
+    if (!words.length) {
       estimate.textContent = '0:00 / --:--';
       estimate.title = 'Preparing audio timeline';
       return;
@@ -49,7 +85,7 @@ export function createPlayer() {
 
   function renderSaved() {
     renderReadTime();
-    $('play').disabled = preparing;
+    $('play').disabled = preparing && !words.length;
     if (preparing) { $('generate-speech').disabled = true; $('generate-speech').textContent = 'Preparing images…'; $('generate-speech').setAttribute('aria-busy', 'true'); return; }
     const state = rendition?.status;
     $('generate-speech').disabled = !words.length || rendition?.fullGeneration && state === 'generating' || state === 'complete';
@@ -72,11 +108,11 @@ export function createPlayer() {
   }
   async function ensure() {
     if (rendition) return rendition;
-    if (preparing) throw new Error('Images are being prepared. Please try again shortly.');
+    if (preparing && !words.length) throw new Error('Images are being prepared. Please try again shortly.');
     if (!snapshot || !words.length) throw new Error('Page is loading. Please try again shortly.');
     if (!loadingRendition) {
       const token = context;
-      loadingRendition = api(`/api/snapshots/${encodeURIComponent(snapshot)}/speech-renditions`, {voice:$('voice').value,view:mode,words}).then(value => {
+      loadingRendition = api(`/api/snapshots/${encodeURIComponent(snapshot)}/speech-renditions`, {voice:$('voice').value,view:speechMode,words}).then(value => {
         if (token !== context) throw new Error('Reading view changed.');
         rendition = value; renderSaved(); watchSaved(); return value;
       }).finally(() => { if (token === context) loadingRendition = null; });
@@ -90,8 +126,11 @@ export function createPlayer() {
   }
   function invalidate() { position = null; completed = false; context++; rendition = loadingRendition = null; clearTimeout(poll); pending.clear(); }
   function acceptWords(value) {
-    if (JSON.stringify(value) !== JSON.stringify(words)) { invalidate(); words = value; }
-    renderSaved();
+    viewWords = value;
+    if (!words.length) { words = value; speechMode = mode; }
+    toView = mapReadingWords(words, value);
+    fromView = mapReadingWords(value, words);
+    restoreView(); renderSaved();
     const token = context;
     ensure().catch(error => { if (token === context) showError(error.message); });
   }
@@ -103,9 +142,11 @@ export function createPlayer() {
     await Promise.all(Array.from({length:2}, async () => {
       while (cursor < urls.length && token === preparation) {
         const url = urls[cursor++];
+        if (Object.hasOwn(imageCache, url)) { imageText[url] = imageCache[url]; continue; }
         try {
           const result = await api(`/api/snapshots/${encodeURIComponent(page)}/image-reading`, {url});
           imageText[url] = result;
+          if (page === snapshot) imageCache[url] = result;
         } catch { failed++; imageText[url] = 'Image description unavailable.'; }
         if (token === preparation) $('generate-speech').textContent = `Preparing images ${Object.keys(imageText).length}/${urls.length}…`;
       }
@@ -124,10 +165,10 @@ export function createPlayer() {
   function prepare() {
     if (!snapshot) return;
     const token = ++preparation;
-    reset(); invalidate(); words = []; index = 0; preparing = true; renderSaved();
+    preparing = true; renderSaved();
     surface?.destroy(); surface = null;
     if (mode === 'reader') {
-      surface = readingSurface($('reader'), acceptWords, start, followChanged);
+      surface = readingSurface($('reader'), acceptWords, viewRead, followChanged);
       prepareImages(surface.images(), token);
     } else $('original').contentWindow?.postMessage({voicesite:true,type:'images',token}, '*');
   }
@@ -263,12 +304,21 @@ export function createPlayer() {
   setSpeed(1);
   window.addEventListener('message', event => {
     if (event.source !== $('original').contentWindow || !event.data?.voicesite || mode !== 'original') return;
+    if (event.data.type === 'anchor' && event.data.token === anchorToken) anchorRequest?.(event.data.anchor);
     if (event.data.type === 'follow' && typeof event.data.enabled === 'boolean') followChanged(event.data.enabled);
     if (event.data.type === 'ready') prepare();
     if (event.data.type === 'images' && event.data.token === preparation && Array.isArray(event.data.urls)) prepareImages([...new Set(event.data.urls.filter(url => typeof url === 'string'))], event.data.token);
     if (event.data.type === 'words' && event.data.token === preparation && Array.isArray(event.data.words)) acceptWords(event.data.words.filter(w => typeof w.text === 'string' && Number.isInteger(w.sentence)));
-    if (event.data.type === 'read' && Number.isInteger(event.data.index) && words[event.data.index]) start(event.data.index);
+    if (event.data.type === 'read' && Number.isInteger(event.data.index) && viewWords[event.data.index]) viewRead(event.data.index);
   });
   $('original').addEventListener('load', () => { if (mode === 'original') prepare(); });
-  return {reset, setSnapshot(id) { preparation++; preparing = false; snapshot = id; words = []; index = 0; invalidate(); }, setMode(next) { preparation++; preparing = false; mode = next; words = []; index = 0; invalidate(); renderSaved(); requestAnimationFrame(prepare); }};
+  return {reset, capturePosition, setSnapshot(id) {
+    preparation++; preparing = false; snapshot = id; words = []; viewWords = []; toView = []; fromView = [];
+    savedAnchor = null; imageCache = Object.create(null); index = 0; surface?.destroy(); surface = null; invalidate();
+  }, setMode(next) {
+    preparation++; preparing = false; mode = next;
+    surface?.destroy(); surface = null;
+    viewWords = []; toView = []; fromView = [];
+    renderSaved(); requestAnimationFrame(prepare);
+  }};
 }
