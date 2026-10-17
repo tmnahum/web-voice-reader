@@ -5,11 +5,12 @@ import postcss from 'postcss';
 import valueParser from 'postcss-value-parser';
 import { loadFavicons } from './favicons.js';
 import { fetchPublic } from './fetch.js';
+import { fetchPage } from './browser-capture.js';
 import { imageUrl, prepareImages } from './images.js';
 
 const domOptions = url => ({ url, virtualConsole: new VirtualConsole() });
 export async function capture(url, fetcher = fetchPublic) {
-  const response = await fetcher(url);
+  const response = await (fetcher === fetchPublic ? fetchPage : fetcher)(url);
   if (!/\b(text\/html|application\/xhtml\+xml)\b/i.test(response.type)) throw new Error('This URL is not an HTML page. Try a web article instead.');
   const charset = response.type.match(/charset=["']?([^\s;"']+)/i)?.[1] || 'utf-8';
   let html; try { html = new TextDecoder(charset).decode(response.body); } catch { html = response.body.toString('utf8'); }

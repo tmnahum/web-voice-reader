@@ -1,3 +1,4 @@
+import { verifyCapture } from './verification.js';
 import { setFavicon } from './favicon.js';
 import { createPlayer } from './player.js';
 const LOCAL_ARCHIVE_KEY = 'voicesite.recentlyArchived.v1';
@@ -46,7 +47,16 @@ applyTheme();
 const player = createPlayer();
 
 const date = value => new Date(value).toLocaleString(undefined, {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'});
-async function api(url, options) { const response = await fetch(url, options); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.'); return result; }
+async function api(url, options) {
+  const response = await fetch(url, options);
+  const result = await response.json();
+  if (response.status === 409 && result.verificationId && url === '/api/capture') {
+    await verifyCapture(result.verificationId);
+    return api(url, options);
+  }
+  if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.');
+  return result;
+}
 function screen(name) { if (name !== 'viewer') { setFavicon(); player.reset(); closeUrlEditor(); } document.body.classList.toggle('viewing', name === 'viewer'); for (const id of ['home','admin','viewer','loading','error']) $(id).hidden = id !== name; }
 function notify(message) { $('toast').textContent = message; $('toast').classList.add('visible'); setTimeout(() => $('toast').classList.remove('visible'), 2500); }
 function fail(error) { screen('error'); $('error-message').textContent = error.message; }

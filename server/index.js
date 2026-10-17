@@ -1,3 +1,5 @@
+import { installVerification } from './browser-verification.js';
+import { captureDiagnostics } from './diagnostics.js';
 import { installEffects } from './effects.js';
 import { loadFavicons } from './favicons.js';
 import express from 'express';
@@ -16,7 +18,7 @@ import { normalizeUrl } from './fetch.js';
 import { createStore } from './store.js';
 import { installAdmin } from './admin.js';
 
-export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture, faviconLoader = loadFavicons, adminPassword = process.env.ADMIN_PASSWORD, speech = createSpeech(), speechDirectory, resumeSpeech = false, imageReading = createImageReading()} = {}) {
+export function createApp({verificationManager, store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture, faviconLoader = loadFavicons, adminPassword = process.env.ADMIN_PASSWORD, speech = createSpeech(), speechDirectory, resumeSpeech = false, imageReading = createImageReading()} = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use('/api/snapshots/:id/speech-renditions', express.json({limit: '8mb'}));
@@ -42,6 +44,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   });
   installEffects(app, speech);
   const requireAdmin = installAdmin(app, adminPassword);
+  installVerification(app, requireAdmin, verificationManager);
   app.get('/api/admin/snapshots', requireAdmin, (req, res) => res.json(store.list()));
   app.get('/api/snapshots', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -55,11 +58,11 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
     if (!req.body.fresh) { const existing = store.list(url)[0]; if (existing) return res.json(existing); }
     if (!active.has(url) && active.size >= 2) return res.status(429).json({error: 'Two captures are already in progress. Please try again shortly.'});
     if (!active.has(url)) {
-      const pending = capturePage(url).then(doc => store.save(doc)).finally(() => active.delete(url));
+      const pending = captureDiagnostics(url, async () => store.save(await capturePage(url))).finally(() => active.delete(url));
       active.set(url, pending);
     }
     try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt, url: doc.url, finalUrl: doc.finalUrl, title: doc.title, wordCount: doc.wordCount}); }
-    catch (error) { res.status(422).json({error: error.message || 'This page could not be captured.'}); }
+    catch (error) { res.status(error.verificationId ? 409 : 422).json({error: error.message || 'This page could not be captured.', ...(error.verificationId ? {verificationId:error.verificationId} : {})}); }
   });
   app.get('/api/snapshots/:id/favicons', async (req, res) => {
     const doc = store.get(req.params.id);
@@ -113,7 +116,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   });
   const web = fileURLToPath(new URL('../web/', import.meta.url));
   // Content-addressed URLs prevent a CDN from mixing an old app bundle with new HTML.
-  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js', 'favicon.png', 'favicon.svg'].map(name => ({name, body: readFileSync(resolve(web, name))}));
+  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js', 'favicon.png', 'favicon.svg', 'verification.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
   const revision = createHash('sha256').update(Buffer.concat(assets.map(a => a.body))).digest('hex').slice(0, 16);
   let shell = readFileSync(resolve(web, 'index.html'), 'utf8');
   for (const asset of assets) {
