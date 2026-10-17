@@ -1,6 +1,37 @@
 // Runs in both the clean reader and the sandboxed saved page. No parent DOM access.
-export function readingSurface(root, onWords, onClick) {
+export function readingSurface(root, onWords, onClick, onFollowChange = () => {}) {
   let words = [], ranges = [], sentence = 0, previousBlock, lastHighlight, lastScroll = -Infinity;
+  const view = root.ownerDocument.defaultView;
+  let following = true, activeIndex = -1, activeMode = 'word', pointerDown = false;
+  function setFollowing(value) {
+    if (following !== value) { following = value; onFollowChange(value); }
+    if (value) {
+      lastScroll = -Infinity;
+      if (ranges[activeIndex] && activeMode !== 'none') keepInView(ranges[activeIndex].range);
+    }
+  }
+  function manualScroll() { setFollowing(false); }
+  function keyScroll(event) {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey ||
+        event.target.closest?.('input,textarea,select,button,[contenteditable]:not([contenteditable="false"])')) return;
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) manualScroll();
+  }
+  function pointerStart(event) {
+    pointerDown = true;
+    // Native scrollbar presses may not produce a later pointer movement.
+    const el = event.target;
+    if (el === document.documentElement && event.clientX >= el.clientWidth) manualScroll();
+    else if (el instanceof view.Element && el.scrollHeight > el.clientHeight && el.offsetWidth > el.clientWidth) {
+      const bounds = el.getBoundingClientRect();
+      if (event.clientX >= bounds.left + el.clientLeft + el.clientWidth) manualScroll();
+    }
+  }
+  function pointerEnd() { pointerDown = false; }
+  function draggedScroll() { if (pointerDown) manualScroll(); }
+  const listeners = [['wheel', manualScroll], ['touchmove', manualScroll], ['keydown', keyScroll],
+    ['pointerdown', pointerStart], ['pointerup', pointerEnd], ['pointercancel', pointerEnd],
+    ['blur', pointerEnd], ['scroll', draggedScroll]];
+  listeners.forEach(([type, handler]) => view.addEventListener(type, handler, {capture:true, passive:true}));
   const style = document.createElement('style');
   style.textContent = '::highlight(voicesite-reading){background:#dce7a5;color:#203427} .voicesite-image-reading{outline:4px solid #9aae56!important;outline-offset:4px}';
   document.head.append(style);
@@ -47,7 +78,7 @@ export function readingSurface(root, onWords, onClick) {
   }
   function keepInView(range) {
     const view = root.ownerDocument.defaultView;
-    if (!range.getBoundingClientRect || view.performance.now() - lastScroll < 800) return;
+    if (!following || !range.getBoundingClientRect || view.performance.now() - lastScroll < 800) return;
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) return;
     const behavior = view.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
@@ -75,6 +106,7 @@ export function readingSurface(root, onWords, onClick) {
     }
   }
   function highlight(index, mode) {
+    activeIndex = index; activeMode = mode;
     const key = `${mode}:${index}`;
     if (key === lastHighlight) return;
     lastHighlight = key;
@@ -93,7 +125,10 @@ export function readingSurface(root, onWords, onClick) {
     event.preventDefault(); event.stopPropagation(); onClick(index);
   }
   root.addEventListener('click', click, true);
-  return {build, images, highlight, destroy() { root.removeEventListener('click', click, true); highlight(-1); style.remove(); }};
+  return {build, images, highlight, setFollowing, destroy() {
+    listeners.forEach(([type, handler]) => view.removeEventListener(type, handler, true));
+    root.removeEventListener('click', click, true); highlight(-1); style.remove();
+  }};
 }
 
 export function splitReading(words, start = 0, limit = 450) {

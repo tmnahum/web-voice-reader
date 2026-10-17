@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { createPlayer } from '../web/player.js';
 
 async function setup(t) {
-  const dom = new JSDOM(`<iframe id="original"></iframe>${['play', 'generate-speech', 'toast', 'read-time', 'voice', 'speed-presets', 'speed', 'slower', 'faster'].map(id => `<button id="${id}"></button>`).join('')}`);
+  const dom = new JSDOM(`<iframe id="original"></iframe>${['play', 'follow-narration', 'generate-speech', 'toast', 'read-time', 'voice', 'speed-presets', 'speed', 'slower', 'faster'].map(id => `<button id="${id}"></button>`).join('')}`);
   const clips = [];
   class Audio {
     paused = true;
@@ -54,7 +54,7 @@ async function setup(t) {
   await flush();
   assert.equal(clips.length, 1);
   assert.equal(button.getAttribute('aria-label'), 'Pause reading');
-  return {player, clips, button};
+  return {player, clips, button, message, follow:dom.window.document.getElementById('follow-narration')};
 }
 
 async function flush() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
@@ -100,4 +100,17 @@ test('reset ignores queued playback events from the previous session', async t =
   await flush();
   await clips[0].play();
   assertPaused(button);
+});
+
+
+test('follow button reflects manual scrolling and resumes following in archived pages', async t => {
+  const {player, message, follow} = await setup(t);
+  assert.equal(follow.hidden, true);
+  message({type:'follow', enabled:false});
+  assert.equal(follow.hidden, false);
+  follow.onclick();
+  assert.equal(follow.hidden, true);
+  message({type:'follow', enabled:false});
+  player.reset();
+  assert.equal(follow.hidden, true);
 });

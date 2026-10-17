@@ -12,6 +12,14 @@ export function createPlayer() {
   let snapshot, mode = 'original', surface, words = [], index = 0, generation = 0, context = 0;
   let running = false, paused = false, speed = 1, audio, frame, objectUrl, poll;
   let rendition, loadingRendition, clip = 0, currentWords = [], pending = new Map();
+  let following = true;
+  function followChanged(value) { following = value; $('follow-narration').hidden = !running || following; }
+  function followNarration() {
+    followChanged(true);
+    if (mode === 'reader') surface?.setFollowing(true);
+    else $('original').contentWindow?.postMessage({voicesite:true,type:'follow',enabled:true}, '*');
+  }
+  $('follow-narration').onclick = () => { highlight(index); followNarration(); };
   function showError(text) {
     $('generate-speech').textContent = 'Retry speech';
     $('generate-speech').disabled = false;
@@ -78,7 +86,7 @@ export function createPlayer() {
   function reset() {
     closeSpeeds(); generation++; audio?.pause(); audio = null; cancelAnimationFrame(frame); clearTimeout(poll);
     if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = null;
-    running = paused = false; pending.clear(); highlight(-1); button();
+    running = paused = false; pending.clear(); highlight(-1); button(); followChanged(true);
   }
   function invalidate() { position = null; completed = false; context++; rendition = loadingRendition = null; clearTimeout(poll); pending.clear(); }
   function acceptWords(value) {
@@ -117,8 +125,9 @@ export function createPlayer() {
     if (!snapshot) return;
     const token = ++preparation;
     reset(); invalidate(); words = []; index = 0; preparing = true; renderSaved();
+    surface?.destroy(); surface = null;
     if (mode === 'reader') {
-      surface?.destroy(); surface = readingSurface($('reader'), acceptWords, start);
+      surface = readingSurface($('reader'), acceptWords, start, followChanged);
       prepareImages(surface.images(), token);
     } else $('original').contentWindow?.postMessage({voicesite:true,type:'images',token}, '*');
   }
@@ -195,7 +204,7 @@ export function createPlayer() {
   }
   async function start(at = 0) {
     reset();
-    completed = false; position = null; index = at; running = true; button(); highlight(at); renderReadTime();
+    completed = false; position = null; index = at; running = true; button(); followNarration(); highlight(at); renderReadTime();
     const token = generation;
     try {
       await ensure();
@@ -254,6 +263,7 @@ export function createPlayer() {
   setSpeed(1);
   window.addEventListener('message', event => {
     if (event.source !== $('original').contentWindow || !event.data?.voicesite || mode !== 'original') return;
+    if (event.data.type === 'follow' && typeof event.data.enabled === 'boolean') followChanged(event.data.enabled);
     if (event.data.type === 'ready') prepare();
     if (event.data.type === 'images' && event.data.token === preparation && Array.isArray(event.data.urls)) prepareImages([...new Set(event.data.urls.filter(url => typeof url === 'string'))], event.data.token);
     if (event.data.type === 'words' && event.data.token === preparation && Array.isArray(event.data.words)) acceptWords(event.data.words.filter(w => typeof w.text === 'string' && Number.isInteger(w.sentence)));

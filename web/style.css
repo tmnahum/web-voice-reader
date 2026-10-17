@@ -113,3 +113,5 @@ body.dark-mode .archive-header #dark-mode[aria-pressed=true]{background:#b9d891;
 @media(max-width:400px){.archive-header .view-controls{gap:3px}.archive-header #versions{max-width:60px}.archive-header #dark-mode span{display:none}}
 body.dark-mode .control-bubble>#generate-speech{background:#303a30;color:var(--ink)}
 body.dark-mode .control-bubble>#generate-speech:disabled{color:var(--muted)}
+
+.control-bubble>#follow-narration{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);width:auto;height:36px;padding:0 16px;border:1px solid var(--line);border-radius:20px;background:var(--paper);color:var(--ink);font-size:12px;white-space:nowrap;box-shadow:0 3px 14px #20342720}

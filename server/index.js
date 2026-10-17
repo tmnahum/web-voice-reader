@@ -94,12 +94,13 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
         if (event.data.dark === true) document.head.append(themeStyle); else themeStyle.remove();
       });
       let buildToken;
-      const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}));
+      const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}), enabled => send('follow', {enabled}));
       addEventListener('message', event => {
         if (event.source !== parent || !event.data?.voicesite) return;
         if (event.data.type === 'images') send('images', {urls:surface.images(), token:event.data.token});
         if (event.data.type === 'build') { buildToken = event.data.token; surface.build(event.data.imageText); }
         if (event.data.type === 'highlight') surface.highlight(event.data.index, event.data.mode);
+        if (event.data.type === 'follow') surface.setFollowing(event.data.enabled === true);
       });
       send('ready', {});
     })();</script>`;
