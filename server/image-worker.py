@@ -18,7 +18,8 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 
 Image.MAX_IMAGE_PIXELS = 20_000_000
 warnings.simplefilter('error', Image.DecompressionBombWarning)
-torch.set_num_threads(4)
+if os.environ.get('IMAGE_THREADS'):
+    torch.set_num_threads(int(os.environ['IMAGE_THREADS']))
 ocr = None
 processor = None
 model = None

@@ -34,6 +34,7 @@ test('challenge detection does not mistake ordinary articles mentioning CAPTCHA 
   assert.equal(isChallenge({status:200,title:'Understanding CAPTCHA',text:'Verify you are human'}), false);
   assert.equal(isChallenge({status:403,headers:{'cf-mitigated':'challenge'}}), true);
   assert.equal(isChallenge({status:200,title:'Just a moment...'}), true);
+  assert.equal(isChallenge({status:200,title:'Reddit',text:'Prove your humanity Complete the challenge'}),true);
 });
 
 test('proxy rejects private, mixed DNS, invalid authorities, and nonstandard ports before connecting', async t => {
@@ -77,7 +78,7 @@ test('verification viewing and control require admin, reject cross-origin action
   const origin = `http://127.0.0.1:${server.address().port}`;
   const base = `${origin}/api/admin/verifications/${entry.id}`;
   for (const path of ['', '/image']) assert.equal((await fetch(base+path)).status,401);
-  for (const path of ['/input','/cancel']) assert.equal((await fetch(base+path,{method:'POST'})).status,401);
+  for (const path of ['/input','/cancel','/capture']) assert.equal((await fetch(base+path,{method:'POST'})).status,401);
   const login = await fetch(origin+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:'test-password'})});
   const headers = {'Content-Type':'application/json',cookie:login.headers.get('set-cookie').split(';')[0]};
   const status = await fetch(base,{headers});
@@ -90,9 +91,20 @@ test('verification viewing and control require admin, reject cross-origin action
   assert.equal((await action({type:'key',key:'Control+L'})).status,400);
   assert.equal((await action({type:'click',x:10,y:20})).status,200);
   assert.deepEqual(clicks,[[10,20]]);
+  const nativeActions = [];
+  entry.page.nativeInput = async action => nativeActions.push(action.type);
+  entry.page.captureViewport = {width:1279,height:899};
+  assert.equal((await action({type:'move',x:1279,y:20})).status,400);
+  assert.equal((await action({type:'down',x:100,y:20})).status,200);
+  assert.equal((await action({type:'up',x:100,y:20})).status,200);
+  assert.deepEqual(nativeActions,['down','up']);
   const capture = await fetch(origin+'/api/capture',{method:'POST',headers,body:'{"url":"https://example.com/"}'});
   assert.equal(capture.status,409); assert.equal((await capture.json()).verificationId,entry.id);
+  assert.equal((await fetch(base+'/capture',{method:'POST',headers:{...headers,origin:'https://evil.example'}})).status,403);
+  assert.equal((await fetch(base+'/capture',{method:'POST',headers})).status,200);
+  assert.equal(entry.captureRequested,true);
   manager.finish(entry,'ready');
+  assert.equal((await fetch(base+'/capture',{method:'POST',headers})).status,409);
   assert.equal((await fetch(base+'/image',{headers})).status,409);
 });
 
@@ -119,11 +131,22 @@ test('manual verification retains the same browser, saves state, resumes once, a
     launch:async options => { assert.equal(options.chromiumSandbox,true); launches++; return {newContext:async () => context,close:async () => { closes++; }}; },
   });
   let verificationId;
-  await assert.rejects(browser('https://example.com/article'), error => { verificationId = error.verificationId; return !!verificationId; });
+  const firstCapture = browser('https://example.com/article');
+  const concurrent = browser('https://example.com/article').catch(error => error);
+  await assert.rejects(firstCapture, error => { verificationId = error.verificationId; return !!verificationId; });
+  assert.equal((await concurrent).verificationId,verificationId);
+  assert.equal(browser.has('https://example.com/article'),true);
   await assert.rejects(browser('https://another.example/'), /already in progress/);
   await assert.rejects(browser('https://example.com/article'), error => error.verificationId === verificationId);
   const entry = manager.get(verificationId);
+  entry.captureRequested = true;
+  await new Promise(resolve => setTimeout(resolve,20));
+  assert.equal(entry.captureRequested,false);
+  assert.match(entry.error,/still showing verification/);
   await entry.page.mouse.click(1,1);
+  await new Promise(resolve => setTimeout(resolve,20));
+  assert.equal(entry.status,'waiting', 'solving verification must not automatically capture');
+  entry.captureRequested = true;
   for (let i = 0; i < 100 && entry.status === 'waiting'; i++) await new Promise(resolve => setTimeout(resolve,5));
   assert.equal(entry.status,'ready');
   const response = await browser('https://example.com/article');

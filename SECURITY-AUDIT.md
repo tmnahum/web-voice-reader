@@ -1,5 +1,42 @@
 # Server security audit — 2026-10-17
 
+## Deployment follow-up — 2026-10-17
+
+The isolation changes below are now deployed at https://voicesite.remoth.net.
+The original findings remain below as the audit record, not a description of the
+current service unit.
+
+- Rootless Podman runs under the separate `hosting` account. The old `tmn` service
+  is disabled. The container mounts only Voicesite data and read-only models;
+  app code is in the read-only image. Its effective capabilities are zero,
+  no-new-privileges is enabled, and seccomp filtering is active. Chrome's own
+  sandbox works with a narrow `chroot` syscall allowance for its nested namespace.
+- Resource budgets were subsequently removed at the owner's request: no explicit
+  CPU, memory, process, temporary-storage, log, or data-volume quota. Worker thread
+  counts use library defaults unless configured. Data lives under
+  `/home/hosting/projects/voicesite/data`; the original 16 GiB volume remains a
+  rollback copy. Resource exhaustion remains possible and can affect the host.
+- Redeployment copies all tracked/unignored project source and the complete `.env`.
+  The environment file is stored privately and mounted read-only outside the image;
+  container-specific paths and ports take precedence.
+- Root-owned nftables rules restrict hosting-account egress. Verified public HTTPS
+  succeeds while direct account connections to active host IPv4/IPv6 loopback
+  listeners fail. From the production container, a controlled host listener, host
+  gateway, and link-local metadata address are unreachable. Its user manager
+  requires the firewall service and data mount at boot.
+- Full browser/speech/effects/OCR/captioning checks passed under hosting. The
+  migrated database passed SQLite quick_check; all 20 snapshot documents matched
+  the original content hash, and all 434 speech files were present. The public
+  homepage and saved Example Domain page loaded successfully after cutover.
+- The first cutover rolled back automatically when Cloudflare rejected the health
+  check's default Python user agent. An explicit deployment user agent fixed the
+  check, and the second cutover completed. Original data and the failed-cutover
+  copy are retained for recovery.
+
+Application-level anonymous abuse controls and per-user browser-state ownership
+remain outstanding. Containers share the host kernel; the new boundaries reduce
+host exposure, rather than guarantee immunity from container/kernel exploits.
+
 Scope: protecting the hosting computer from anonymous users of the public site. Reviewed server routes, URL fetching and DNS validation, browser fallback/proxy, subprocesses, image/speech processing, persistence, authentication, and the installed systemd service. Original-page replay/XSS was lower priority, except where it affects server operations.
 
 **Assessment:** no direct command injection, arbitrary filesystem access, SQL injection, or private-address fetch bypass was identified in this review. However, this deployment is not adequately isolated from the owner's computer. Anonymous resource exhaustion is possible without exploiting a dependency; a successful exploit in a server process would have the owner's user permissions. This is a bounded code/configuration review, not proof that exploitable vulnerabilities are absent.

@@ -15,9 +15,9 @@ export function createVerifications() {
     for (const [id, entry] of entries) if (entry.expiresAt <= Date.now()) entries.delete(id);
   }
   return {
-    create(url, page) {
+    create(url, page, reason = 'verification') {
       prune();
-      const entry = {id:randomUUID(), url:logUrl(url), page, status:'waiting', expiresAt:Date.now() + 5 * 60_000};
+      const entry = {id:randomUUID(), url:logUrl(url), page, reason, status:'waiting', expiresAt:Date.now() + 5 * 60_000};
       entries.set(entry.id, entry);
       logEvent('browser.verification_required', {url:entry.url, verificationId:entry.id});
       return entry;
@@ -44,14 +44,22 @@ export function installVerification(app, requireAdmin, manager = verifications) 
     next();
   });
   app.get(base, (_req, res) => {
-    const {id, url, status, expiresAt} = res.locals.verification;
-    res.json({id, url, status, expiresAt});
+    const {id, url, status, expiresAt, reason, error, captureRequested} = res.locals.verification;
+    const viewport = res.locals.verification.page?.captureViewport || {width:1280,height:900};
+    res.json({id, url, status, expiresAt, viewport, reason, error, captureRequested:!!captureRequested});
   });
   app.get(`${base}/image`, async (_req, res) => {
     const entry = res.locals.verification;
     if (!entry.page || entry.status !== 'waiting') return res.status(409).json({error:'Verification is no longer waiting.'});
     try { res.type('jpeg').send(await entry.page.screenshot({type:'jpeg', quality:75, timeout:4000})); }
     catch { res.status(409).json({error:'The browser is changing pages. Try again.'}); }
+  });
+  app.post(`${base}/capture`, (_req, res) => {
+    const entry = res.locals.verification;
+    if (!entry.page || entry.status !== 'waiting') return res.status(409).json({error:'This browser session is no longer waiting.'});
+    entry.error = null;
+    entry.captureRequested = true;
+    res.json({ok:true});
   });
   app.post(`${base}/input`, async (req, res) => {
     const entry = res.locals.verification;
@@ -60,11 +68,21 @@ export function installVerification(app, requireAdmin, manager = verifications) 
     entry.busy = true;
     try {
       const {type, x, y, key, text, deltaY} = req.body || {};
-      if (type === 'click' && Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x < 1280 && y >= 0 && y < 900) await entry.page.mouse.click(x, y);
-      else if (type === 'key' && ['Tab','Enter','Space','Backspace','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key)) await entry.page.keyboard.press(key);
-      else if (type === 'text' && typeof text === 'string' && text.length <= 200) await entry.page.keyboard.insertText(text);
-      else if (type === 'scroll' && Number.isFinite(deltaY) && Math.abs(deltaY) <= 900) await entry.page.mouse.wheel(0, deltaY);
-      else return res.status(400).json({error:'Invalid browser action.'});
+      const {width,height} = entry.page.captureViewport || {width:1280,height:900};
+      const pointer = ['click','move','down','up'].includes(type) && Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x < width && y >= 0 && y < height;
+      const validKey = type === 'key' && ['Tab','Enter','Space','Backspace','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key);
+      const validText = type === 'text' && typeof text === 'string' && text.length <= 200;
+      const scroll = type === 'scroll' && Number.isFinite(deltaY) && Math.abs(deltaY) <= 900;
+      if (!(pointer || validKey || validText || scroll)) return res.status(400).json({error:'Invalid browser action.'});
+      if (entry.page.nativeInput) await entry.page.nativeInput({type,x,y,key,text,deltaY});
+      else if (type === 'click') await entry.page.mouse.click(x,y);
+      else if (pointer) {
+        await entry.page.mouse.move(x,y);
+        if (type === 'down') await entry.page.mouse.down();
+        if (type === 'up') await entry.page.mouse.up();
+      } else if (validKey) await entry.page.keyboard.press(key);
+      else if (validText) await entry.page.keyboard.insertText(text);
+      else await entry.page.mouse.wheel(0,deltaY);
       res.json({ok:true});
     } catch { res.status(409).json({error:'The browser is changing pages. Try again.'}); }
     finally { entry.busy = false; }

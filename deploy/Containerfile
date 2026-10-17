@@ -17,17 +17,15 @@ RUN npm install -g pnpm@10.18.3
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile
-COPY server ./server
-COPY web ./web
-COPY deploy/container-check.mjs ./deploy/container-check.mjs
+RUN apt-get update && apt-get install -y --no-install-recommends xdotool && rm -rf /var/lib/apt/lists/*
+COPY . .
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=28767 \
     ARCHIVE_DB=/data/archive.sqlite3 SPEECH_DIR=/data/speech \
     IMAGE_READING_DIR=/data/image-reading BROWSER_STATE_DIR=/data/browser-state \
     KOKORO_PYTHON=/opt/inference/bin/python KOKORO_MODELS=/models/kokoro \
     IMAGE_PYTHON=/opt/inference/bin/python IMAGE_CAPTION_MODEL=/models/blip-image-captioning-base \
     EFFECTS_PYTHON=/opt/effects/bin/python BROWSER_EXECUTABLE=/usr/bin/chromium \
-    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HOME=/tmp/home \
-    OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HOME=/tmp/home
 USER 1000:1000
 EXPOSE 28767
-CMD ["node", "server/index.js"]
+CMD ["node", "--env-file-if-exists=/run/secrets/voicesite.env", "server/index.js"]

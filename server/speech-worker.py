@@ -13,7 +13,8 @@ from phonemizer.backend.espeak.wrapper import EspeakWrapper
 EspeakWrapper.set_library(espeakng_loader.get_library_path())
 os.environ['ESPEAK_DATA_PATH'] = espeakng_loader.get_data_path()
 from kokoro import KModel, KPipeline
-torch.set_num_threads(4)
+if os.environ.get('KOKORO_THREADS'):
+    torch.set_num_threads(int(os.environ['KOKORO_THREADS']))
 path = Path(os.environ['KOKORO_MODELS'])
 model = KModel(config=str(path / 'config.json'), model=str(path / 'kokoro-v1_0.pth')).to('cpu').eval()
 pipeline = KPipeline(lang_code='a', model=model, device='cpu')

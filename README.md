@@ -59,37 +59,37 @@ Original-view reading uses an injected message bridge inside the opaque-origin s
 
 `GET /api/snapshots/:id` returns article HTML, plain article text, and whole-page `blocks`. Each block includes text, tag type, and an ID that maps to `data-read-id` on the archived original element. Speech reads the rendered DOM, including image alt text, rather than using these static block references.
 
-`POST /api/capture` accepts `{ "url": "https://example.com", "fresh": false }`. `GET /api/admin/snapshots` lists the latest 100 snapshots after admin sign-in. The unfiltered legacy `GET /api/snapshots` also requires admin authentication; `GET /api/snapshots?url=...` remains public and returns versions for an exact source URL. `/snapshots/:id/original` serves the saved original HTML in an opaque-origin sandbox. Original scripts, styles, fonts, images, media, and embeds may load from their original locations. The frame can run scripts and forms but cannot read the parent app DOM, cookies, or storage. Reader HTML is separately sanitized before insertion into the app. External assets depend on source availability, CORS/embedding policy, and hotlink permissions.
+`POST /api/capture` accepts `{ "url": "https://example.com", "fresh": false, "mode": "auto" }`. Modes are `auto` (fast HTML, escalating empty/script-dependent shells and Reddit to a browser), `html` (Without scripts), and `browser` (Wait for page). Explicit modes perform a new capture; automatic mode reuses a saved nonempty snapshot unless `fresh` is true. Empty/loading-only responses are rejected rather than archived. `GET /api/admin/snapshots` lists the latest 100 snapshots after admin sign-in. The unfiltered legacy `GET /api/snapshots` also requires admin authentication; `GET /api/snapshots?url=...` remains public and returns versions for an exact source URL. `/snapshots/:id/original` serves the saved original HTML in an opaque-origin sandbox. Original scripts, styles, fonts, images, media, and embeds may load from their original locations. The frame can run scripts and forms but cannot read the parent app DOM, cookies, or storage. Reader HTML is separately sanitized before insertion into the app. External assets depend on source availability, CORS/embedding policy, and hotlink permissions.
 
 ## Server capture security
 
 Captures first use a dedicated server HTTP client, not a personal browser profile. It sends only its own User-Agent and Accept headers, explicitly omits credentials, and has no cookie jar. Incoming browser cookies and authorization headers are not forwarded to archived sites. A 403, or a Cloudflare-challenged 429/503, triggers an isolated Chrome fallback; ordinary 429 rate limits are not retried. Source JavaScript executes in the fallback browser; jsdom resource loading and script execution remain disabled.
 
-Chrome runs with its sandbox enabled on a private Xvfb display. All browser HTTP/HTTPS connections use a loopback proxy that validates every DNS answer and connects directly to a validated public IP, including CONNECT tunnels and subresources. Chrome's implicit localhost proxy bypass, QUIC, non-proxied WebRTC UDP, and direct DNS resolution are disabled; service workers, downloads, popups, media, and fonts are blocked. The proxy limits connections and network bytes. This is application-level protection, not a container/network-namespace security boundary.
+Stock Chromium is launched directly (rather than through Playwright's automation launcher), with its sandbox enabled on a private Xvfb display. Playwright attaches over container-local CDP for navigation, screenshots, and DOM capture; no debugging port is published. Admin input is delivered through X11 with xdotool. All browser HTTP/HTTPS connections use a loopback proxy that validates every DNS answer and connects directly to a validated public IP, including CONNECT tunnels and subresources. Chrome's implicit localhost proxy bypass, QUIC, non-proxied WebRTC UDP, and direct DNS resolution are disabled; service workers are bypassed for the capture page; downloads, popups, and media are blocked. Fonts are allowed. The proxy limits connections and network bytes. This is application-level protection, not a container/network-namespace security boundary.
 
-The fallback saves anonymous browser cookies/local storage separately by requested origin under `data/browser-state` (directories mode 0700, files 0600). It never opens your personal Chrome profile. Future captures can reuse clearance cookies while they remain valid. Set `BROWSER_CAPTURE=0` to disable the fallback, `BROWSER_EXECUTABLE` to override `/usr/bin/google-chrome`, or `BROWSER_STATE_DIR` to change the state directory. Chrome and Xvfb must be installed. Only one live browser fallback runs at once.
+The fallback uses a dedicated Chromium profile per requested origin under `data/browser-state/profiles` (directories mode 0700), retaining site state even after an unsuccessful verification. It never opens your personal Chrome profile. One browser stays alive for up to two minutes between captures of the same origin, displaying only a blank page while idle; switching origins or idle expiry closes it. The profile remains on disk. Graceful service shutdown closes the browser to flush profile state. Set `BROWSER_CAPTURE=0` to disable the fallback, `BROWSER_EXECUTABLE` to override the browser executable, or `BROWSER_STATE_DIR` to change the profile directory. Chrome/Chromium, Xvfb, and xdotool must be installed. Only one live browser fallback runs at once. Persistence and native manual input do not guarantee that a site will accept its verification.
 
-If an automatic challenge persists for eight seconds, the capture returns a verification ID and the UI opens a live verification dialog. **The admin password is required to view screenshots or interact with the browser.** All verification API endpoints live under `/api/admin/verifications`, use the existing admin session, reject cross-origin requests, and disable caching. Controls relay bounded mouse clicks, scrolling, text, and a small allowlist of keys; they do not expose CDP, arbitrary JavaScript, or navigation commands. The browser stays open for up to five minutes. After verification, it retains its clearance state, the UI retries capture, and the saved DOM passes through the existing archive pipeline. Completed browser results expire after two minutes if not consumed. Cancel closes the waiting page; service restarts discard waiting sessions. The dialog and tab title notify the active user; no email, push, or background messaging is sent.
+If an automatic challenge persists for eight seconds, or a rendered page still lacks content after fifteen seconds, the capture returns a verification ID and the UI opens a live verification dialog. **The admin password is required to view screenshots or interact with the browser.** All verification API endpoints live under `/api/admin/verifications`, use the existing admin session, reject cross-origin requests, and disable caching. Controls relay bounded pointer movement, presses/releases, scrolling, text, and a small allowlist of keys; they do not expose CDP, arbitrary JavaScript, or navigation commands. The browser stays open for up to five minutes. Wait for page opens this dialog even for pages without a challenge. Once the content looks ready, press Capture this page; interactive sessions wait for this explicit action. The button skips automatic stability checks but rejects a recognized challenge. Clearance state is retained, and the saved DOM passes through the existing archive pipeline. Failures show the underlying capture error. Completed browser results expire after two minutes if not consumed. Cancel closes the waiting page; service restarts discard waiting sessions. The dialog and tab title notify the active user; no email, push, or background messaging is sent.
 
 Every HTML/CSS fetch and redirect validates the destination and all DNS answers, rejects private/reserved addresses and URL credentials, and pins the connection to validated addresses. Redirect chains are limited to six requests and a 45-second overall fetch budget, with individual request timeouts. Declared and decoded response sizes are bounded, and connections are destroyed on completion or failure. Database writes use bound parameters rather than interpolating page content into SQL.
 
-Browser replay intentionally permits source JavaScript and live resources, including interactions such as dismissing subscription popups. The existing opaque-origin sandbox separates the source page from Voicesite; reader HTML is sanitized. These server protections do not make an untrusted source site safe to visit. Source URLs and query strings are saved verbatim, so URL-embedded tokens become part of the shared snapshot.
+Ordinary automatic HTML captures retain source JavaScript and live resources, including interactions such as dismissing subscription popups. Without scripts captures and browser-rendered captures disable source scripts; a nonce-authorized Voicesite bridge still supports reading, links, and appearance controls. Browser rendering waits for meaningful main content to remain stable for two seconds (five seconds for Reddit), with Reddit requiring a loaded post. Repeated computed styles are shared to avoid inflating the snapshot. The saved composed DOM includes open shadow roots and slotted content and does not rerun source hydration scripts. This preserves what loaded rather than returning to a loading screen; it does not load an entire infinite comment feed. The existing opaque-origin sandbox separates the source page from Voicesite; reader HTML is sanitized. These server protections do not make an untrusted source site safe to visit. Source URLs and query strings are saved verbatim, so URL-embedded tokens become part of the shared snapshot.
 
 ## Before opening this service to other users
 
 The current deployment assumes a single trusted owner. Admin authentication protects browser viewing/control, **not the public capture endpoint**. Address these before inviting public use:
 
 - Isolate browser cookies, local storage, verification sessions, pending capture results, and snapshot ownership per authenticated user. Today origin-scoped state and snapshots are shared. Do not sign into personal accounts in the verification browser; any resulting cookies would be reused by later captures of that origin.
-- Move browser workers into a restricted OS/container environment with enforced egress rules, a dedicated user, minimal filesystem access, and CPU/memory/process limits. Chrome currently runs under the application service user and inherits its environment. The Chrome sandbox and validating proxy are defense in depth, not a complete hostile-code isolation boundary.
+- The deployed service runs as the isolated hosting account in restricted rootless Podman with enforced egress rules and resource limits. Chrome retains its sandbox and receives only desktop environment variables, not app credentials. Browser and app still share this project container and its data mount; consider a separate browser worker container before multi-user use.
 - Add capture authentication, rate limits, queue/resource quotas, abuse controls, and per-user authorization for verification IDs. Currently any admin session can control any waiting browser, and anonymous requests can consume the one browser slot.
 - Define state retention and deletion, backup protection, log retention, and handling of URL-embedded credentials. Future extension uploads of logged-in pages need explicit private storage, access controls, and sanitization; they must not enter the current shared snapshot model by default.
 - Review source-script replay, CSRF/session behavior, browser patching, challenge expiration, and remote-control access as part of a public-launch security review. Keep browser debugging ports and the internal proxy inaccessible externally.
 
 ## Capture limits
 
-Capture saves server-returned HTML and CSS, or the rendered DOM when the browser fallback is needed. Original replay loads source scripts and live assets. Login-only content, anti-bot pages, JavaScript-rendered articles, and dynamically loaded comments may be inaccessible or incomplete. Only the requested page is captured; links open the live destination. Original mode retains visual markup and source behavior, but is not a transparent proxy of the original origin. Login, cookies/local storage, origin-dependent API calls, some embedded frames, and JavaScript-only initial content may not work. The persistent reader text remains usable when live assets or services disappear. Objects requiring browser plugins are not enabled.
+Capture saves server-returned HTML and CSS, or a frozen rendered DOM when browser rendering is selected or needed. Original replay loads source scripts and live assets. Login-only content, anti-bot pages, JavaScript-rendered articles, and dynamically loaded comments may be inaccessible or incomplete. Only the requested page is captured; links open the live destination. Original mode retains visual markup and source behavior, but is not a transparent proxy of the original origin. Login, cookies/local storage, origin-dependent API calls, some embedded frames, and JavaScript-only initial content may not work. The persistent reader text remains usable when live assets or services disappear. Objects requiring browser plugins are not enabled.
 
-HTML is limited to 5 MB, stylesheets to 2 MB each, 80 stylesheet resources / roughly 25 MB per capture, with a 45-second resource scheduling budget and 12-second individual request timeout. Stylesheets that fail to save (including parsing, size, and time limits) retain their live URL and are reported in the viewer. Nested CSS imports are saved up to four levels; CSS font/image URLs and image-set candidates are resolved to their original stylesheet location; inline data assets and SVG fragment references are retained. Integrity hashes are removed from rewritten stylesheet links so the browser accepts the saved CSS. Two different captures can run concurrently; duplicate in-flight requests share a capture. Browser fallback is limited to one live session, normally with a 35-second navigation/rendering budget; a manual verification session extends that to five minutes. Chrome startup has a separate 10-second limit. The browser proxy caps network traffic at roughly 40 MB and 240 connections.
+Main page HTML and rendered DOM have no application size ceiling. Stylesheets are limited to 2 MB each, 80 stylesheet resources / roughly 25 MB per capture, with a 45-second resource scheduling budget and 12-second individual request timeout. Stylesheets that fail to save (including parsing, size, and time limits) retain their live URL and are reported in the viewer. Nested CSS imports are saved up to four levels; CSS font/image URLs and image-set candidates are resolved to their original stylesheet location; inline data assets and SVG fragment references are retained. Integrity hashes are removed from rewritten stylesheet links so the browser accepts the saved CSS. Two different captures can run concurrently; duplicate in-flight requests share a capture. Browser fallback is limited to one live session, normally with a 60-second navigation/rendering budget; a manual verification session extends that to five minutes. Chrome startup has a separate 10-second limit. The browser proxy caps network traffic at roughly 40 MB and 240 connections.
 
 Data lives in `data/archive.sqlite3` (SQLite WAL). Back up the data directory while the app is stopped or use SQLite's backup API. No migration of the legacy Python database is performed. Snapshot storage is shared, without accounts or quotas. The home page’s “You recently archived” list stores up to 100 snapshot summaries in this browser’s localStorage. Successful archive requests (including reuse and resave) add to it; simply viewing a shared snapshot does not. Clearing browser data clears the local list, not the saved snapshots. Existing global history is not imported into personal lists.
 
@@ -106,67 +106,59 @@ Tests cover extraction, text references, asset skipping, CSS imports, reader san
 
 Public URL: https://voicesite.remoth.net
 
-### Prepared container migration
+### Container deployment
 
-The restricted Podman deployment is prepared in `deploy/Containerfile` and
-`deploy/deploy.py`. **The live site still uses the original `tmn` service until
-the account bootstrap and initial migration below have completed.** The hosting
-account cannot be created from an agent session without administrator authentication.
+The live site runs as a restricted rootless Podman container under `hosting`,
+managed by its user-systemd Quadlet. Migration completed on 2026-10-17; the old
+`tmn` service is disabled and its original data is retained for recovery.
+`deploy/Containerfile` and `deploy/deploy.py` define the deployment.
 
-Run this one-time command in a local terminal (review the script first):
-
-```sh
-sudo bash /home/tmn/.agents/skills/cloudflare-tunnel-deploy/scripts/bootstrap-hosting.sh voicesite 16
-```
-
-It creates the shared `hosting` account, installs the `hosting <command>` helper,
-sets account-level private-network egress restrictions, and mounts a bounded 16 GiB
-data filesystem. `tmn` can administer `hosting` without giving `hosting` root
-privileges. The helper and firewall are shared infrastructure; the data volume
-belongs only to Voicesite. The bootstrap does not move or restart the current app.
-
-Then, as `tmn`, from this checkout:
-
-```sh
-python3 deploy/deploy.py --migrate
-```
-
-This builds with cached dependencies, copies model weights into the hosting
-project directory, and checks Chrome, speech, effects, OCR, captioning, and HTTP
-startup with disposable data. It then stops the old writer for the final data copy,
-starts the hosting Quadlet on the same `127.0.0.1:28767` port, and verifies the
-existing public URL. The old service is disabled only after success. On cutover
-failure the script restores the prior service. Original data is retained. A
-partially copied migration destination requires inspection before retrying.
-
-Normal live updates require one command, without root or tunnel edits:
+Redeploy from this checkout as `tmn`:
 
 ```sh
 python3 deploy/deploy.py
-# Also exercise the browser and inference workers after related changes:
+# Also verify browser and inference workers after related changes:
 python3 deploy/deploy.py --full-check
 ```
 
-The container uses a read-only root filesystem, a non-root user, dropped
-capabilities, no-new-privileges, 6 GiB memory (no additional swap), four CPUs, 512
-processes, bounded logs/tmpfs, and project-only data/model mounts. Chrome keeps its
-own sandbox. Its seccomp profile is derived from the installed Podman default,
-with only `chroot` additionally allowed for Chrome's nested user namespace; no
-container capability is added. Application secrets stay outside the image.
+Every deployment copies tracked and unignored source files, including uncommitted
+changes. Generated dependencies, Git internals, data/models, and `.env` files are
+excluded from the image. The **entire local `.env`** is copied to the private
+hosting runtime file and mounted read-only at `/run/secrets/voicesite.env`.
+Node loads it before application imports, preserving dotenv quoting and multiline
+values. Image-defined internal paths, production mode, and port take precedence
+so host paths in `.env` do not break container startup. Failed cutovers restore
+the prior runtime configuration and image.
 
-Manage the migrated service from `tmn` with `hosting systemctl --user status
-voicesite`, `hosting podman logs --tail 80 voicesite`, or `hosting podman ps`. Its
-Quadlet lives in `/home/hosting/.config/containers/systemd/voicesite.container`;
-the previous configuration is saved alongside it as `.previous`. Images are
-retained for rollback; periodically remove only obsolete Voicesite images/build
-cache after confirming the live and previous image IDs. Do not prune unrelated
-projects. Anonymous processing still needs application-level abuse controls;
-container limits contain its host resource impact rather than provide user quotas.
+Per the owner's preference, there are **no explicit per-app CPU, RAM, swap,
+process-count, log-size, temporary-storage, or persistent-storage budgets**.
+The numerical libraries choose their normal CPU thread counts unless configured
+explicitly with `KOKORO_THREADS` or `IMAGE_THREADS`. GPU access remains disabled.
+Normal OS/hardware constraints still apply. Request validation, network checks,
+and operation timeouts remain part of the application's input handling.
 
-The account's firewall and mounted disk quota must be checked after bootstrap;
-their host enforcement cannot be verified before that root-only step. Initial
-container worker tests can run under `tmn` without promoting or exposing the test
-container. They do not prove the future hosting account's egress policy.
+Active data lives in `/home/hosting/projects/voicesite/data`, an ordinary directory
+sharing the host filesystem's free space. The former 16 GiB volume at
+`/srv/hosting/projects/voicesite/data` is retained as a rollback copy and is no
+longer mounted into the live container. The original developer data is also kept.
+
+Security isolation remains: rootless Podman under `hosting`, a non-root container
+user, a read-only image, zero effective capabilities, no-new-privileges, syscall
+filtering, private temporary filesystems, and root-owned private-network egress
+rules. Only application data is writable; models and the runtime `.env` are
+read-only. Core dumps remain disabled to avoid dumping secrets. Chrome retains
+its own sandbox through a narrowly extended default seccomp profile.
+
+Manage the service with `hosting systemctl --user status voicesite` and
+`hosting podman logs --tail 80 voicesite`. Its Quadlet is at
+`/home/hosting/.config/containers/systemd/voicesite.container`; the previous one
+is retained as `.previous`. The deploy health check uses an explicit User-Agent
+because Cloudflare rejects Python urllib's default User-Agent for this site.
+
+The shared hosting account is already bootstrapped. Future projects can use normal
+private directories under `/home/hosting/projects/<project>` without new disk
+quotas or root-only storage provisioning. The deployment skill describes setup
+and the existing tunnel, which remains unchanged for routine updates.
 
 ### Original service (before migration / rollback)
 

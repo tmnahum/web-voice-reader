@@ -1,6 +1,9 @@
 // Run in a disposable container with the production restrictions before promotion.
 import assert from 'node:assert/strict';
-import {createBrowserCapture} from '../server/browser-capture.js';
+import {createBrowserCapture, virtualDisplay} from '../server/browser-capture.js';
+import {inspectRenderedPage,serializeRenderedPage} from '../server/page-readiness.js';
+import {createDesktopPool} from '../server/desktop-browser.js';
+import {createBrowserProxy} from '../server/browser-proxy.js';
 import {createSpeech} from '../server/speech.js';
 import {createImageReading} from '../server/image-reading.js';
 import {renderEffects} from '../server/effects.js';
@@ -8,7 +11,35 @@ import {execFileSync} from 'node:child_process';
 const browser = createBrowserCapture({directory:'/tmp/browser-state'});
 const page = await browser('https://example.com');
 assert.match(page.body.toString(), /Example Domain/);
+await browser.close();
 console.log('Sandboxed browser capture passed.');
+const desktops = createDesktopPool({directory:'/tmp/desktop-check', createDisplay:virtualDisplay, createProxy:createBrowserProxy});
+try {
+  const session = await desktops.acquire('https://example.com', 'example');
+  await session.page.setContent(`<button style="position:absolute;left:100px;top:100px;width:200px;height:100px" onclick="this.textContent='clicked'">Test input</button>`);
+  const {width,height} = session.page.captureViewport;
+  assert.ok(width >= 1278 && width <= 1280 && height >= 898 && height <= 900);
+  assert.deepEqual(await session.page.evaluate(() => [innerWidth,innerHeight]), [width,height]);
+  await session.page.nativeInput({type:'down',x:150,y:150});
+  await session.page.nativeInput({type:'up',x:150,y:150});
+  await session.page.waitForFunction(() => document.querySelector('button').textContent === 'clicked');
+  await session.page.setContent('<main>Loading...</main><script>setTimeout(() => {document.querySelector("main").textContent="The delayed article is now loaded and ready to archive."},250)</script>');
+  assert.equal((await session.page.evaluate(inspectRenderedPage)).ready,false);
+  await session.page.waitForFunction(() => document.querySelector('main').textContent.startsWith('The delayed'));
+  assert.equal((await session.page.evaluate(inspectRenderedPage)).ready,true);
+  const frozen = await session.page.evaluate(serializeRenderedPage);
+  assert.match(frozen,/The delayed article/);
+  assert.doesNotMatch(frozen,/<script/);
+  const screenshot = await session.page.screenshot();
+  assert.ok(screenshot.length > 100);
+  await session.context.addCookies([{name:'desktop-check',value:'retained',url:'https://example.com',expires:Math.floor(Date.now()/1000)+3600}]);
+  await desktops.release(session);
+  assert.equal(await desktops.acquire('https://example.com', 'example'), session);
+  await desktops.close();
+  const reopened = await desktops.acquire('https://example.com', 'example');
+  assert.ok((await reopened.context.cookies('https://example.com')).some(c => c.name === 'desktop-check' && c.value === 'retained'));
+  console.log('Native desktop input, viewport, reuse, and profile persistence passed.');
+} finally {await desktops.close();}
 const speech = createSpeech();
 const images = createImageReading({directory:'/tmp/image-reading'});
 try {

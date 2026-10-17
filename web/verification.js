@@ -4,10 +4,11 @@ export function verifyCapture(id) {
     const dialog = document.createElement('dialog');
     dialog.className = 'verification-dialog';
     dialog.setAttribute('aria-labelledby', 'verification-heading');
-    dialog.innerHTML = `<div class="verification-heading"><h2 id="verification-heading">A quick verification</h2><button type="button" data-cancel>Cancel capture</button></div>
+    dialog.innerHTML = `<div class="verification-heading"><h2 id="verification-heading">Browser verification</h2><button type="button" data-cancel>Cancel capture</button></div>
       <p data-status role="status">This site needs your help before we can save the page.</p>
       <form data-login hidden><label>Admin password <input type="password" autocomplete="current-password" required></label><button>Unlock browser</button></form>
-      <div data-browser hidden><p data-site></p><p>Click the verification below. Saving resumes automatically when it clears. This session expires after five minutes.</p>
+      <div data-browser hidden><p data-site></p><p>Complete any verification below, then click Capture this page when the content looks ready. This session expires after five minutes. This dedicated browser remembers site data between attempts.</p>
+      <button type="button" data-capture>Capture this page</button>
       <img data-image alt="Live verification browser. Click to interact." tabindex="0" draggable="false">
       <div class="verification-controls"><button type="button" data-key="Tab">Tab</button><button type="button" data-key="Space">Space</button><button type="button" data-key="Enter">Enter</button><button type="button" data-scroll="-600">Scroll up</button><button type="button" data-scroll="600">Scroll down</button>
       <form data-text><label>Challenge answer <input maxlength="200" autocomplete="off"></label><button>Send text</button></form></div></div>`;
@@ -45,15 +46,22 @@ export function verifyCapture(id) {
     }
     dialog.querySelector('[data-cancel]').onclick = cancel;
     dialog.addEventListener('cancel', event => { event.preventDefault(); void cancel(); });
+    dialog.querySelector('[data-capture]').onclick = async () => {
+      const button = dialog.querySelector('[data-capture]');
+      button.disabled = true;
+      try { await post(`${base}/capture`, {}); }
+      catch (error) { status.textContent = error.message; button.disabled = false; }
+    };
     async function poll() {
       if (done) return;
       try {
         const state = await (await request(base)).json();
         if (done) return;
         if (state.status === 'ready') return finish();
-        if (state.status !== 'waiting') return finish(new Error('Verification ended before the page could be saved. Try saving again.'));
+        if (state.status !== 'waiting') return finish(new Error(state.error || 'The browser session ended before the page could be saved. Try saving again.'));
         login.hidden = true; browser.hidden = false;
-        status.textContent = 'Complete the site’s verification below.';
+        status.textContent = state.error || (state.captureRequested ? 'Capturing this page…' : 'When the content looks ready, click Capture this page.');
+        dialog.querySelector('[data-capture]').disabled = !!state.captureRequested;
         dialog.querySelector('[data-site]').textContent = state.url;
         const image = await request(`${base}/image`);
         const blob = await image.blob();
@@ -70,7 +78,7 @@ export function verifyCapture(id) {
         if (error.status === 404) return finish(error);
         status.textContent = error.message;
       }
-      if (!done) timer = setTimeout(poll, 1200);
+      if (!done) timer = setTimeout(poll, 500);
     }
     login.onsubmit = async event => {
       event.preventDefault();
@@ -79,16 +87,47 @@ export function verifyCapture(id) {
         login.reset(); void poll();
       } catch (error) { status.textContent = error.message; }
     };
+    // Serialize press/release events. Coalesce only unsent pointer movement.
+    const actions = [];
     async function input(action) {
-      if (busy || done) return;
+      if (done) return;
+      if (action.type === 'move' && actions.at(-1)?.type === 'move') actions[actions.length - 1] = action;
+      else if (action.type === 'up' || actions.length < 32) actions.push(action);
+      if (busy) return;
       busy = true;
-      try { await post(`${base}/input`, action); }
-      catch (error) { status.textContent = error.message; }
+      try {
+        while (actions.length && !done) await post(`${base}/input`, actions.shift());
+      } catch (error) { actions.length = 0; status.textContent = error.message; }
       finally { busy = false; }
     }
-    img.onclick = event => {
+    function point(event) {
       const rect = img.getBoundingClientRect();
-      void input({type:'click', x:(event.clientX - rect.left) * 1280 / rect.width, y:(event.clientY - rect.top) * 900 / rect.height});
+      const width = img.naturalWidth || 1280, height = img.naturalHeight || 900;
+      return {x:Math.max(0,Math.min(width-1,(event.clientX - rect.left) * width / rect.width)), y:Math.max(0,Math.min(height-1,(event.clientY - rect.top) * height / rect.height))};
+    }
+    let pressed = false, lastMove = 0;
+    img.onpointermove = event => {
+      if (performance.now() - lastMove < 60) return;
+      lastMove = performance.now();
+      void input({type:'move', ...point(event)});
+    };
+    img.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault(); img.focus();
+      pressed = true; img.setPointerCapture(event.pointerId);
+      void input({type:'down', ...point(event)});
+    };
+    const release = event => {
+      if (!pressed) return;
+      pressed = false;
+      void input({type:'up', ...point(event)});
+    };
+    img.onpointerup = release;
+    img.onpointercancel = release;
+    img.onlostpointercapture = release;
+    img.onwheel = event => {
+      event.preventDefault();
+      void input({type:'scroll',deltaY:Math.max(-900,Math.min(900,event.deltaY))});
     };
     img.onkeydown = event => {
       if (['Enter',' ','Backspace','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)) {

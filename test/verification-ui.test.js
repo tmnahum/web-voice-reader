@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
 
-test('verification dialog gates browser view on admin login, relays scaled clicks, and resolves after clearance', async () => {
+test('verification dialog gates browser view on admin login, relays scaled pointer presses/releases, and resolves after clearance', async () => {
   const dom = new JSDOM('<title>Voicesite</title><body></body>',{url:'https://voicesite.example/',runScripts:'outside-only'});
   const {window} = dom;
   window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -19,7 +19,8 @@ test('verification dialog gates browser view on admin login, relays scaled click
       return {ok:true};
     }
     if (!authenticated) return {ok:false,status:401,json:async () => ({error:'Sign in'})};
-    if (path.endsWith('/input')) { actions.push(body); verified = true; return {ok:true}; }
+    if (path.endsWith('/input')) { actions.push(body); return {ok:true}; }
+    if (path.endsWith('/capture')) { verified = true; return {ok:true}; }
     if (path.endsWith('/image')) return {ok:true,blob:async () => ({})};
     return {ok:true,json:async () => ({status:verified ? 'ready' : 'waiting',url:'https://example.com/'})};
   };
@@ -39,9 +40,14 @@ test('verification dialog gates browser view on admin login, relays scaled click
     assert.equal(dialog.querySelector('[data-browser]').hidden,false);
     const image = dialog.querySelector('[data-image]');
     image.getBoundingClientRect = () => ({left:0,top:0,width:640,height:450});
-    image.dispatchEvent(new window.MouseEvent('click',{clientX:100,clientY:50}));
+    image.setPointerCapture = () => {};
+    image.onpointerdown({button:0,clientX:100,clientY:50,pointerId:1,preventDefault() {}});
+    image.onpointerup({clientX:100,clientY:50,pointerId:1});
+    await new Promise(resolve => setTimeout(resolve,20));
+    assert.equal(verified,false);
+    await dialog.querySelector('[data-capture]').onclick();
     await result;
-    assert.deepEqual(actions,[{type:'click',x:200,y:100}]);
+    assert.deepEqual(actions,[{type:'down',x:200,y:100},{type:'up',x:200,y:100}]);
     assert.equal(window.document.querySelector('dialog'),null);
     assert.equal(window.document.title,'Voicesite');
   } finally { window.close(); }

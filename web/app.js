@@ -124,7 +124,7 @@ function setMode(next) {
 async function saveUrl(url, fresh = false, replace = false) {
   const version = ++routeVersion; screen('loading');
   try {
-    const result = await api('/api/capture', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url, fresh})});
+    const result = await api('/api/capture', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url, fresh, mode:$('capture-mode').value})});
     rememberArchive(result);
     if (version !== routeVersion) return;
     await showSnapshot(result.id, version);
@@ -240,7 +240,7 @@ $('recapture').onclick = async () => {
   $('recapture').setAttribute('aria-label', 'Saving page');
   notify('Saving a fresh copy…');
   try {
-    const result = await api('/api/capture', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url:source, fresh:true})});
+    const result = await api('/api/capture', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url:source, fresh:true, mode:$('recapture-mode').value})});
     rememberArchive(result);
     if (version !== routeVersion) return;
     await showSnapshot(result.id, version, true);

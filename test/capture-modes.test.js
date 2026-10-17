@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createApp} from '../server/index.js';
+import {createStore} from '../server/store.js';
+
+test('capture modes validate input, retry empty cached snapshots, and enforce frozen replay CSP', async t => {
+  const url = 'https://example.com/';
+  const store = createStore(':memory:');
+  const baseDoc = {url,finalUrl:url,title:'Article',originalHtml:'<p>Loaded content</p>',text:'Loaded content',blocks:[],readerHtml:'<p>Loaded content</p>',wordCount:0,capturedAt:new Date().toISOString()};
+  store.save(baseDoc);
+  const modes = [];
+  const server = createApp({store,capturePage:async (_url,_fetcher,{mode}) => {modes.push(mode); return {...baseDoc,wordCount:2,scriptsDisabled:mode !== 'auto'};}}).listen(0,'127.0.0.1');
+  await new Promise(resolve => server.once('listening',resolve));
+  t.after(async () => {await new Promise(resolve => server.close(resolve)); store.close();});
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const capture = mode => fetch(origin+'/api/capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url,mode})});
+  assert.equal((await capture('unsupported')).status,400);
+  assert.equal((await capture('auto')).status,200);
+  assert.deepEqual(modes,['auto']);
+  assert.equal((await capture('auto')).status,200);
+  assert.deepEqual(modes,['auto']);
+  const frozen = await (await capture('html')).json();
+  assert.deepEqual(modes,['auto','html']);
+  const replay = await fetch(`${origin}/snapshots/${frozen.id}/original`);
+  const csp = replay.headers.get('content-security-policy');
+  const scriptPolicy = csp.match(/script-src ([^;]+)/)[1];
+  assert.match(scriptPolicy,/^'nonce-[^']+'$/);
+  const nonce = scriptPolicy.slice(7,-1);
+  assert.ok((await replay.text()).includes(`<script nonce="${nonce}">`));
+});

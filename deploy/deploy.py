@@ -14,6 +14,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = '/srv/hosting/projects/voicesite'
 UNIT = '/home/hosting/.config/containers/systemd/voicesite.container'
+RUNTIME = f'{PROJECT}/config/runtime.env'
+DATA = '/home/hosting/projects/voicesite/data'
 PUBLIC = 'https://voicesite.remoth.net'
 
 
@@ -48,7 +50,8 @@ def copy_tree(source, destination):
 def healthy(url, attempts=30):
     for _ in range(attempts):
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            request = urllib.request.Request(url, headers={'User-Agent': 'Voicesite-Deployment/1.0'})
+            with urllib.request.urlopen(request, timeout=5) as response:
                 if response.status == 200 and b'Voicesite' in response.read(200_000):
                     return
         except (OSError, ValueError):
@@ -73,11 +76,13 @@ LogDriver=k8s-file
 NoNewPrivileges=true
 DropCapability=all
 SeccompProfile={PROJECT}/config/chromium-seccomp.json
-EnvironmentFile={PROJECT}/config/runtime.env
-Volume={PROJECT}/data:/data:rw
+Volume={RUNTIME}:/run/secrets/voicesite.env:ro
+Volume={DATA}:/data:rw,nosuid,nodev,noexec
 Volume={PROJECT}/models:/models:ro
-Tmpfs=/tmp:rw,nosuid,nodev,size=512m,mode=1777
-PodmanArgs=--memory=6g --memory-swap=6g --cpus=4 --pids-limit=512 --shm-size=256m --log-opt=max-size=10mb --ulimit=core=0:0
+Tmpfs=/tmp:rw,nosuid,nodev,size=0,mode=1777
+Tmpfs=/run:rw,nosuid,nodev,size=0,mode=755
+Tmpfs=/var/tmp:rw,nosuid,nodev,size=0,mode=1777
+PodmanArgs=--pids-limit=-1 --shm-size=0 --log-opt=max-size=0 --ulimit=core=0:0
 [Service]
 Restart=on-failure
 RestartSec=3
@@ -86,6 +91,18 @@ TimeoutStopSec=30
 [Install]
 WantedBy=default.target
 '''
+
+
+def read_runtime():
+    return (ROOT / '.env').read_bytes()
+
+
+def source_files():
+    paths = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT).decode().split('\0')
+    excluded = {'.git', 'node_modules', 'data', 'models', '__pycache__', '.pytest_cache'}
+    return sorted({name for name in paths if name and (ROOT / name).is_file()
+                   and not any(part in excluded or part.startswith('.venv') or part == '.env' or part.startswith('.env.')
+                               for part in Path(name).parts)})
 
 
 def main():
@@ -97,7 +114,7 @@ def main():
     if os.getuid() == 0:
         raise SystemExit('Run as tmn, not root. Only the one-time bootstrap needs root.')
     host('true')
-    host('mountpoint', '-q', f'{PROJECT}/data')
+    host('mkdir', '-p', str(Path(DATA).parent))
     host('mkdir', '-p', '/home/hosting/.config/containers/systemd', '/home/hosting/builds')
     # Serialize deployments, including from separate agent sessions.
     lock = '/home/hosting/builds/voicesite.lock'
@@ -107,6 +124,7 @@ def main():
         raise SystemExit('Another deploy is running (or its lock needs inspection).')
     stage = '/home/hosting/builds/voicesite-' + uuid.uuid4().hex
     old_unit = None
+    old_runtime = None
     old_stopped = False
     promoted = False
     cutover_started = False
@@ -118,15 +136,29 @@ def main():
             raise RuntimeError('Already containerized; omit --migrate.')
         if not args.migrate and not old_unit:
             raise RuntimeError('First deployment requires --migrate.')
+        if old_unit:
+            old_runtime = output('cat', RUNTIME)
+        runtime_contents = read_runtime()
+        # Validate the file without exposing values. Node parses full dotenv syntax.
+        settings = json.loads(run(['node', '--env-file=.env', '-e',
+            'console.log(JSON.stringify({password:process.env.ADMIN_PASSWORD,models:process.env.KOKORO_MODELS}))'],
+            stdout=subprocess.PIPE, text=True).stdout)
+        password = settings.get('password', '')
+        if not password or '\n' in password or '\r' in password:
+            raise RuntimeError('A single-line ADMIN_PASSWORD is required.')
+        moving_data = bool(old_unit and f'Volume={PROJECT}/data:/data:'.encode() in old_unit)
+        if moving_data and subprocess.run(['hosting', 'test', '-e', DATA]).returncode == 0:
+            raise RuntimeError('The new data directory already exists; inspect it before moving live storage.')
         if args.migrate:
-            existing = output('find', f'{PROJECT}/data', '-mindepth', '1', '-maxdepth', '1', '!', '-name', 'lost+found')
+            host('mkdir', '-p', DATA)
+            existing = output('find', DATA, '-mindepth', '1', '-maxdepth', '1', '!', '-name', 'lost+found')
             if existing:
                 raise RuntimeError('Migration destination has existing data. Inspect it before retrying; nothing was overwritten.')
         host('mkdir', '-p', stage)
         with tempfile.TemporaryFile() as archive:
             with tarfile.open(fileobj=archive, mode='w') as tar:
-                for name in ['package.json', 'pnpm-lock.yaml', '.containerignore', 'server', 'web', 'deploy']:
-                    tar.add(ROOT / name, arcname=name, filter=lambda i: None if '__pycache__' in i.name else i)
+                for name in source_files():
+                    tar.add(ROOT / name, arcname=name, recursive=False)
             archive.seek(0)
             host('tar', '--no-same-owner', '-xf', '-', '-C', stage, stdin=archive)
         tag = 'localhost/voicesite:build-' + uuid.uuid4().hex
@@ -143,26 +175,21 @@ def main():
         put(f'{PROJECT}/config/chromium-seccomp.json', json.dumps(profile))
         if args.migrate:
             # Extract only needed settings; never copy tmn's paths or other secrets to the image.
-            settings = json.loads(run(['node', '--env-file=.env', '-e',
-                'console.log(JSON.stringify({password:process.env.ADMIN_PASSWORD,models:process.env.KOKORO_MODELS}))'],
-                stdout=subprocess.PIPE, text=True).stdout)
-            password = settings.get('password', '')
-            if not password or '\n' in password or '\r' in password:
-                raise RuntimeError('A single-line ADMIN_PASSWORD is required.')
             host('mkdir', '-p', f'{PROJECT}/models/kokoro')
             copy_tree(settings['models'], f'{PROJECT}/models/kokoro')
             copy_tree(ROOT / 'models', f'{PROJECT}/models')
-            put(f'{PROJECT}/config/runtime.env', f'ADMIN_PASSWORD={password}\n')
         # Candidate is checked with private scratch data and no production secrets.
         smoke = 'voicesite-check-' + uuid.uuid4().hex[:12]
         common = ['--init', '--userns=keep-id:uid=1000,gid=1000', '--user=1000:1000', '--read-only',
                   '--cap-drop=all', '--security-opt=no-new-privileges',
                   f'--security-opt=seccomp={PROJECT}/config/chromium-seccomp.json',
-                  '--ulimit=core=0:0', '--memory=6g', '--memory-swap=6g',
-                  '--cpus=4', '--pids-limit=512', '--shm-size=256m',
+                  '--ulimit=core=0:0', '--pids-limit=-1', '--shm-size=0',
+                  '--log-driver=k8s-file', '--log-opt=max-size=0',
                   '--network=slirp4netns:allow_host_loopback=false',
-                  '--tmpfs=/tmp:rw,nosuid,nodev,size=512m,mode=1777',
-                  '--tmpfs=/data:rw,nosuid,nodev,size=128m,mode=1777',
+                  '--tmpfs=/tmp:rw,nosuid,nodev,size=0,mode=1777',
+                  '--tmpfs=/run:rw,nosuid,nodev,size=0,mode=755',
+                  '--tmpfs=/var/tmp:rw,nosuid,nodev,size=0,mode=1777',
+                  '--tmpfs=/data:rw,nosuid,nodev,size=0,mode=1777',
                   '-v', f'{PROJECT}/models:/models:ro']
         # The bootstrap firewall must be active before any production promotion.
         run(['systemctl', 'is-active', '--quiet', 'hosting-egress.service'])
@@ -178,9 +205,16 @@ def main():
         if args.migrate:
             run(['systemctl', '--user', 'stop', 'voicesite.service'])
             old_stopped = True
-            copy_tree(ROOT / 'data', f'{PROJECT}/data')
+            copy_tree(ROOT / 'data', DATA)
+        if moving_data:
+            host('systemctl', '--user', 'stop', 'voicesite.service')
+            host('mkdir', '-m', '700', DATA)
+            host('bash', '-o', 'pipefail', '-c',
+                 'tar --exclude=./lost+found -C "$1" -cf - . | tar --no-same-owner -C "$2" -xf -',
+                 'copy-data', f'{PROJECT}/data', DATA)
         if old_unit:
             put(UNIT + '.previous', old_unit)
+        put(RUNTIME, runtime_contents)
         put(UNIT, unit(image))
         host('systemctl', '--user', 'daemon-reload')
         host('systemctl', '--user', 'restart', 'voicesite.service')
@@ -195,6 +229,7 @@ def main():
         if cutover_started and not promoted and (old_stopped or old_unit):
             subprocess.run(['hosting', 'systemctl', '--user', 'stop', 'voicesite.service'])
             if old_unit:
+                put(RUNTIME, old_runtime + '\n')
                 put(UNIT, old_unit)
                 host('systemctl', '--user', 'daemon-reload')
                 host('systemctl', '--user', 'start', 'voicesite.service')

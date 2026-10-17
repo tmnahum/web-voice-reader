@@ -11,7 +11,7 @@ spec.loader.exec_module(deployment)
 
 
 class CutoverTests(unittest.TestCase):
-    def exercise(self, *, build_failure=False, health_failure=False, migration_copy_failure=False):
+    def exercise(self, *, build_failure=False, health_failure=False, migration_copy_failure=False, success=False):
         calls, writes = [], []
         previous = b'[Container]\nImage=previous-image\n'
         migration = migration_copy_failure
@@ -34,6 +34,8 @@ class CutoverTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0)
 
         def output(*args):
+            if args == ('cat', deployment.RUNTIME):
+                return 'ADMIN_PASSWORD=previous-fixture'
             if args[0] == 'find':
                 return ''
             if args[0] == 'cat':
@@ -54,12 +56,17 @@ class CutoverTests(unittest.TestCase):
         with patch.object(deployment, 'host', host), patch.object(deployment, 'run', run), \
              patch.object(deployment, 'output', output), patch.object(deployment, 'healthy', healthy), \
              patch.object(deployment, 'copy_tree', copy_tree), \
+             patch.object(deployment, 'read_runtime', return_value=b'ADMIN_PASSWORD=fixture-only\nEXTRA_SETTING=preserved\n'), \
+             patch.object(deployment, 'source_files', return_value=['package.json', 'pnpm-lock.yaml']), \
              patch.object(deployment, 'put', lambda p, b: writes.append((p, b))), \
              patch.object(deployment.subprocess, 'run', raw_run), \
              patch.object(deployment.os, 'getuid', return_value=1000), \
              patch('sys.argv', argv):
-            with self.assertRaises(RuntimeError):
+            if success:
                 deployment.main()
+            else:
+                with self.assertRaises(RuntimeError):
+                    deployment.main()
         return calls, writes, previous
 
     def test_failed_build_does_not_restart_or_stop_production(self):
@@ -70,8 +77,15 @@ class CutoverTests(unittest.TestCase):
     def test_unhealthy_cutover_restores_previous_unit_and_service(self):
         calls, writes, previous = self.exercise(health_failure=True)
         self.assertEqual(writes[-1], (deployment.UNIT, previous))
+        runtime_writes = [body for path, body in writes if path == deployment.RUNTIME]
+        self.assertEqual(runtime_writes, [b'ADMIN_PASSWORD=fixture-only\nEXTRA_SETTING=preserved\n', 'ADMIN_PASSWORD=previous-fixture\n'])
         self.assertIn(('hosting', 'systemctl', '--user', 'stop', 'voicesite.service'), calls)
         self.assertIn(('hosting', 'systemctl', '--user', 'start', 'voicesite.service'), calls)
+
+    def test_regular_redeploy_syncs_full_environment(self):
+        calls, writes, _ = self.exercise(success=True)
+        self.assertIn((deployment.RUNTIME, b'ADMIN_PASSWORD=fixture-only\nEXTRA_SETTING=preserved\n'), writes)
+        self.assertIn(('hosting', 'systemctl', '--user', 'restart', 'voicesite.service'), calls)
 
     def test_failed_data_copy_restores_legacy_service_without_disabling_it(self):
         calls, _, _ = self.exercise(migration_copy_failure=True)

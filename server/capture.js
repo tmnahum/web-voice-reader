@@ -9,8 +9,8 @@ import { fetchPage } from './browser-capture.js';
 import { imageUrl, prepareImages } from './images.js';
 
 const domOptions = url => ({ url, virtualConsole: new VirtualConsole() });
-export async function capture(url, fetcher = fetchPublic) {
-  const response = await (fetcher === fetchPublic ? fetchPage : fetcher)(url);
+export async function capture(url, fetcher = fetchPublic, {mode = 'auto'} = {}) {
+  const response = await (fetcher === fetchPublic ? fetchPage : fetcher)(url, undefined, mode);
   if (!/\b(text\/html|application\/xhtml\+xml)\b/i.test(response.type)) throw new Error('This URL is not an HTML page. Try a web article instead.');
   const charset = response.type.match(/charset=["']?([^\s;"']+)/i)?.[1] || 'utf-8';
   let html; try { html = new TextDecoder(charset).decode(response.body); } catch { html = response.body.toString('utf8'); }
@@ -18,6 +18,13 @@ export async function capture(url, fetcher = fetchPublic) {
   const { document } = dom.window;
   const purifier = createDOMPurify(dom.window);
   const base = document.baseURI;
+  const scriptsDisabled = response.rendered || mode === 'html';
+  if (scriptsDisabled) {
+    document.querySelectorAll('script,noscript,iframe,object,embed').forEach(el => el.remove());
+    for (const el of document.querySelectorAll('*')) for (const attr of [...el.attributes]) {
+      if (/^on/i.test(attr.name) || attr.name === 'srcdoc' || /^(?:javascript|vbscript):/i.test(attr.value.trim())) el.removeAttribute(attr.name);
+    }
+  }
   prepareImages(document, base);
   let article;
   try { article = new Readability(document.cloneNode(true), { maxElemsToParse: 60000 }).parse(); } catch { /* fall back to visible body */ }
@@ -120,7 +127,8 @@ export async function capture(url, fetcher = fetchPublic) {
   viewport.name = 'viewport'; viewport.content = 'width=device-width, initial-scale=1'; document.head.append(viewport);
   const spacer = document.createElement('div');
   spacer.setAttribute('aria-hidden', 'true'); spacer.style.cssText = 'height:100px;clear:both;pointer-events:none'; document.body.append(spacer);
+  if (!text.trim() || /^(loading|please wait)[\s.!…]*$/i.test(text.trim())) {readerDom.window.close(); dom.window.close(); throw new Error('The page contains no readable content. Try Wait for page instead.');}
   const favicons = await loadFavicons({url, finalUrl:response.url, originalHtml:html}, fetcher);
-  const result = { favicons, captureVersion: 3, url, finalUrl: response.url, title, byline: article?.byline || '', excerpt: article?.excerpt || text.slice(0, 180), readerHtml, text, blocks, originalHtml: dom.serialize(), wordCount: text.split(/\s+/).filter(Boolean).length, readerFallback: !article, assets: { saved: [...cache.values()].filter(v => v.startsWith('data:text/css;')).length, missing, bytes }, capturedAt: new Date().toISOString() };
+  const result = { favicons, captureVersion: 4, captureMethod:response.rendered ? 'browser' : 'html', scriptsDisabled:!!scriptsDisabled, url, finalUrl: response.url, title, byline: article?.byline || '', excerpt: article?.excerpt || text.slice(0, 180), readerHtml, text, blocks, originalHtml: dom.serialize(), wordCount: text.split(/\s+/).filter(Boolean).length, readerFallback: !article, assets: { saved: [...cache.values()].filter(v => v.startsWith('data:text/css;')).length, missing, bytes }, capturedAt: new Date().toISOString() };
   readerDom.window.close(); dom.window.close(); return result;
 }

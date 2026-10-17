@@ -1,4 +1,5 @@
 import { archiveLinks } from '../web/archive-links.js';
+import {closeCaptureBrowser} from './browser-capture.js';
 import { installVerification } from './browser-verification.js';
 import { captureDiagnostics } from './diagnostics.js';
 import { installEffects } from './effects.js';
@@ -13,7 +14,7 @@ try { loadEnvFile(); } catch {}
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { capture } from './capture.js';
 import { normalizeUrl } from './fetch.js';
 import { createStore } from './store.js';
@@ -56,13 +57,16 @@ export function createApp({verificationManager, store = createStore(process.env.
     if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && ![`http://${req.headers.host}`, `https://${req.headers.host}`].includes(req.headers.origin))) return res.status(403).json({error: 'Cross-origin captures are not allowed.'});
     let url;
     try { url = normalizeUrl(req.body?.url); } catch (error) { return res.status(400).json({error: error.message}); }
-    if (!req.body.fresh) { const existing = store.list(url)[0]; if (existing) return res.json(existing); }
-    if (!active.has(url) && active.size >= 2) return res.status(429).json({error: 'Two captures are already in progress. Please try again shortly.'});
-    if (!active.has(url)) {
-      const pending = captureDiagnostics(url, async () => store.save(await capturePage(url))).finally(() => active.delete(url));
-      active.set(url, pending);
+    const mode = req.body.mode || 'auto';
+    if (!['auto','html','browser'].includes(mode)) return res.status(400).json({error:'Invalid capture mode.'});
+    if (!req.body.fresh && mode === 'auto') { const existing = store.list(url)[0]; if (existing?.wordCount > 0) return res.json(existing); }
+    const key = `${mode}:${url}`;
+    if (!active.has(key) && active.size >= 2) return res.status(429).json({error: 'Two captures are already in progress. Please try again shortly.'});
+    if (!active.has(key)) {
+      const pending = captureDiagnostics(url, async () => store.save(await capturePage(url, undefined, {mode}))).finally(() => active.delete(key));
+      active.set(key, pending);
     }
-    try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt, url: doc.url, finalUrl: doc.finalUrl, title: doc.title, wordCount: doc.wordCount}); }
+    try { const doc = await active.get(key); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt, url: doc.url, finalUrl: doc.finalUrl, title: doc.title, wordCount: doc.wordCount}); }
     catch (error) { res.status(error.verificationId ? 409 : 422).json({error: error.message || 'This page could not be captured.', ...(error.verificationId ? {verificationId:error.verificationId} : {})}); }
   });
   app.get('/api/snapshots/:id/favicons', async (req, res) => {
@@ -82,9 +86,11 @@ export function createApp({verificationManager, store = createStore(process.env.
   });
   app.get('/snapshots/:id/original', (req, res) => {
     const doc = store.get(req.params.id); if (!doc) return res.status(404).send('Snapshot not found.');
-    res.set('Content-Security-Policy', "default-src https: http: data: blob:; script-src https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; style-src https: http: data: 'unsafe-inline'; img-src https: http: data: blob:; font-src https: http: data:; connect-src https: http: wss: ws:; object-src 'none'; base-uri https: http:; form-action https: http:; sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads");
+    const nonce = randomBytes(18).toString('base64');
+    const scripts = doc.scriptsDisabled ? `'nonce-${nonce}'` : "https: http: data: blob: 'unsafe-inline' 'unsafe-eval'";
+    res.set('Content-Security-Policy', `default-src https: http: data: blob:; script-src ${scripts}; style-src https: http: data: 'unsafe-inline'; img-src https: http: data: blob:; font-src https: http: data:; connect-src https: http: wss: ws:; object-src 'none'; base-uri https: http:; form-action https: http:; sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads`);
     res.set('Cache-Control', 'no-store');
-    const bridge = `<script>(() => {
+    const bridge = `<script nonce="${nonce}">(() => {
       const send = (type, payload) => parent.postMessage({voicesite: true, type, ...payload}, '*');
       const themeStyle = document.createElement('style');
       themeStyle.textContent = \`
@@ -141,5 +147,9 @@ export function createApp({verificationManager, store = createStore(process.env.
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 28767);
+  for (const signal of ['SIGTERM','SIGINT']) process.once(signal, async () => {
+    await closeCaptureBrowser();
+    process.exit(0);
+  });
   createApp({resumeSpeech:true}).listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Voicesite is running at http://localhost:${port}`));
 }
