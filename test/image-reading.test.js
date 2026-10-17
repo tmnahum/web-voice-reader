@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -27,6 +28,24 @@ test('image analysis is deduplicated, persists, and retries failures', async () 
   } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
+test('image readings refresh legacy captions and persist embedded OCR text', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'image-ocr-'));
+  const url = 'data:image/png;base64,aW1hZ2U=';
+  const legacyKey = createHash('sha256').update(JSON.stringify(['v1', 'page', url])).digest('hex');
+  const result = {kind:'caption',text:'A roadside sign.',ocrText:'STOP'};
+  let calls = 0;
+  const options = {directory,analyze:async () => { calls++; return result; }};
+  try {
+    await writeFile(join(directory, `${legacyKey}.json`), JSON.stringify({kind:'caption',text:'A roadside sign.'}));
+    assert.deepEqual(await createImageReading(options).read('page',url), result);
+    assert.deepEqual(await createImageReading(options).read('page',url), result);
+    assert.equal(calls, 1);
+    for (const ocrText of [42, 'x'.repeat(20001)]) {
+      await assert.rejects(createImageReading({...options,analyze:async()=>({...result,ocrText})}).read('invalid',url), /Invalid image analysis/);
+    }
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
 test('generated image readings preserve order, prefer alt text, and highlight images', () => {
   const dom = new JSDOM('<article><p>Before.</p><img src="alt.png" alt="Author description."><img src="text.png" alt=""><img src="photo.png"><img src="hidden.png" aria-hidden="true"><img src="decorative.png" role="presentation"><p>After.</p></article>');
   const original = new Map();
@@ -38,11 +57,13 @@ test('generated image readings preserve order, prefer alt text, and highlight im
   try {
     let words;
     const surface = readingSurface(document.querySelector('article'), value => words=value, ()=>{});
-    assert.deepEqual(surface.images(), ['text.png','photo.png']);
-    surface.build({'alt.png':'Wrong text','text.png':'Text in image: Hello world.','photo.png':'Image: A green tree.'});
-    assert.equal(words.map(w=>w.text).join(' '), 'Before. Author description. Text in image: Hello world. Image: A green tree. After.');
+    assert.deepEqual(surface.images(), ['alt.png','text.png','photo.png']);
+    surface.build({'alt.png':{kind:'caption',text:'Wrong text',ocrText:'STOP'},'text.png':{kind:'ocr',text:'Hello world.',ocrText:'Hello world.'},'photo.png':{kind:'caption',text:'A green tree.',ocrText:'Park'}});
+    assert.equal(words.map(w=>w.text).join(' '), 'Before. Author description. Text in image: STOP Text in image: Hello world. Image: A green tree. Text in image: Park After.');
     surface.highlight(words.findIndex(w=>w.text==='Hello'),'word');
     assert.ok(document.querySelector('[src="text.png"]').classList.contains('voicesite-image-reading'));
+    surface.build({'alt.png':'Image description unavailable.','text.png':{kind:'decorative',text:'',ocrText:''},'photo.png':{kind:'caption',text:'A tree.',ocrText:''}});
+    assert.equal(words.map(w=>w.text).join(' '), 'Before. Author description. Image: A tree. After.');
     surface.destroy();
   } finally {
     for (const [key, descriptor] of original) { if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]; }

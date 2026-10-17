@@ -13,7 +13,7 @@ function save(path, value) { writeFileSync(`${path}.tmp`, JSON.stringify(value))
 export function createRenditions({speech, directory = process.env.SPEECH_DIR || 'data/speech', resume = true}) {
   const root = resolve(directory), manifests = join(root, 'renditions'), clips = join(root, 'clips');
   mkdirSync(manifests, {recursive:true}); mkdirSync(clips, {recursive:true});
-  const jobs = new Map(), pending = new Map();
+  const jobs = new Map(), pending = new Map(), durations = new Map();
   let pumping = false, closed = false, lastJob, priority = 0;
   const manifestPath = id => join(manifests, `${id}.json`);
   const clipPath = id => join(clips, `${id}.json`);
@@ -24,7 +24,14 @@ export function createRenditions({speech, directory = process.env.SPEECH_DIR || 
     return jobs.get(id);
   }
   function describe(job) {
-    const chunks = job.chunks.map(c => ({start:c.start, ready:existsSync(clipPath(c.key))}));
+    const chunks = job.chunks.map(c => {
+      const ready = existsSync(clipPath(c.key));
+      if (ready && !durations.has(c.key)) {
+        const duration = read(clipPath(c.key)).duration;
+        durations.set(c.key, Number.isFinite(duration) && duration >= 0 ? duration : null);
+      }
+      return {start:c.start, ready, duration:ready ? durations.get(c.key) : null};
+    });
     const ready = chunks.filter(c => c.ready).length;
     return {id:job.id, voice:job.voice, view:job.view, chunks, ready, total:chunks.length,
       fullGeneration:job.generateAll, status:ready === chunks.length ? 'complete' : job.error ? 'error' : job.generateAll || job.chunks.some(c => pending.has(c.key)) ? 'generating' : 'idle', error:job.error || null};

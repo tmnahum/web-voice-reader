@@ -7,11 +7,17 @@ export function readingSurface(root, onWords, onClick) {
   function imageSource(img) { return img.getAttribute('src') || img.currentSrc || ''; }
   function images() {
     return [...new Set([...root.querySelectorAll('img')].filter(img =>
-      !img.getAttribute('alt')?.trim() &&
       !img.closest('[hidden],[aria-hidden="true"],[role="presentation"],[role="none"]') &&
       img.getClientRects().length && getComputedStyle(img).visibility !== 'hidden' &&
       getComputedStyle(img).display !== 'none'
     ).map(imageSource).filter(Boolean))];
+  }
+  function imageReading(node, result) {
+    const alt = node.getAttribute('alt')?.trim();
+    if (!result || typeof result === 'string') return alt || result || '';
+    const description = alt || (result.kind === 'caption' ? `Image: ${result.text}` : '');
+    const embedded = result.ocrText || (result.kind === 'ocr' ? result.text : '');
+    return [description, embedded ? `Text in image: ${embedded}` : ''].filter(Boolean).join(' ');
   }
   function build(imageText = {}) {
     lastHighlight = null; words = []; ranges = []; sentence = 0; previousBlock = null;
@@ -24,7 +30,7 @@ export function readingSurface(root, onWords, onClick) {
       if (node.nodeType !== 3 && !isImage) continue;
       if (isImage && element.closest('[role="presentation"],[role="none"]')) continue;
       if (!element.getClientRects().length || getComputedStyle(element).visibility === 'hidden' || getComputedStyle(element).display === 'none') continue;
-      const text = isImage ? node.getAttribute('alt')?.trim() || imageText[imageSource(node)] || '' : node.textContent;
+      const text = isImage ? imageReading(node, imageText[imageSource(node)]) : node.textContent;
       const block = element.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,figcaption,td,pre,div,article') || root;
       if (block !== previousBlock || isImage) sentence++;
       previousBlock = block;
@@ -104,4 +110,31 @@ export function splitReading(words, start = 0, limit = 450) {
     chunks.push({start: begin, text: words.slice(begin, i).map(w => w.text).join(' ')});
   }
   return chunks;
+}
+
+// Audio timeline seconds: playback rate changes how fast this clock advances.
+export function readingProgress(wordCount, chunks, index = 0, position = null, completed = false) {
+  const parts = chunks?.length ? chunks : [{start:0}];
+  let total = 0, current = 0, estimated = false;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i], end = parts[i + 1]?.start ?? wordCount;
+    const count = Math.max(0, end - part.start);
+    const known = Number.isFinite(part.duration) && part.duration >= 0;
+    const duration = known ? part.duration : count / 3;
+    estimated ||= !known;
+    total += duration;
+    if (position) {
+      if (i < position.chunk) current += duration;
+      else if (i === position.chunk) current += Math.max(0, Math.min(duration, position.time));
+    } else {
+      current += duration * Math.max(0, Math.min(1, count ? (index - part.start) / count : 0));
+    }
+  }
+  return {current:completed ? total : Math.min(current, total), total, estimated};
+}
+
+export function formatReadingTime(seconds) {
+  const value = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(value / 3600), minutes = Math.floor(value / 60) % 60;
+  return `${hours ? `${hours}:${String(minutes).padStart(2, '0')}` : minutes}:${String(value % 60).padStart(2, '0')}`;
 }

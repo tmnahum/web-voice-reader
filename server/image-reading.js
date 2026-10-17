@@ -35,7 +35,7 @@ export function createImageReading({directory = process.env.IMAGE_READING_DIR ||
   return {
     read(snapshot, url) {
       if (typeof url !== 'string' || url.length > 8_000_000) return Promise.reject(new Error('Invalid image URL.'));
-      const key = createHash('sha256').update(JSON.stringify(['v1', snapshot, url])).digest('hex');
+      const key = createHash('sha256').update(JSON.stringify(['v2', snapshot, url])).digest('hex');
       if (pending.has(key)) return pending.get(key);
       if (pending.size >= 64) return Promise.reject(new Error('Image queue is full. Try again shortly.'));
       const task = tail.then(async () => {
@@ -54,6 +54,7 @@ export function createImageReading({directory = process.env.IMAGE_READING_DIR ||
         if (!body.length || body.length > 6_000_000) throw new Error('Image is too large or empty.');
         const result = await (analyze || localAnalyze)(body);
         if (!['ocr','caption','decorative'].includes(result.kind) || typeof result.text !== 'string' || result.text.length > 20000) throw new Error('Invalid image analysis.');
+        if (result.ocrText !== undefined && (typeof result.ocrText !== 'string' || result.ocrText.length > 20000)) throw new Error('Invalid image analysis.');
         await mkdir(directory, {recursive:true});
         await writeFile(`${path}.tmp`, JSON.stringify(result));
         await rename(`${path}.tmp`, path);

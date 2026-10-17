@@ -54,7 +54,8 @@ test('home uses browser-local history; capture persists it without adding shared
   const requests = [];
   dom.window.fetch = async path => { requests.push(path); return {ok:true, json:async () => path.startsWith('/api/snapshots?') ? [doc] : doc}; };
   try {
-    // Isolate archive behavior from the independently developed speech player.
+    // Isolate archive behavior from speech playback and favicon rendering.
+    dom.window.setFavicon = () => {};
     dom.window.eval(script.replace(/^import .*;$/gm, '') .replace('const player = createPlayer();', 'const player = {reset() {}, setMode() {}};'));
     assert.deepEqual(requests, []);
     assert.equal(dom.window.document.getElementById('archive-count').textContent, '0');

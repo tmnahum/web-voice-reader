@@ -1,3 +1,4 @@
+import { setFavicon } from './favicon.js';
 import { createPlayer } from './player.js';
 const LOCAL_ARCHIVE_KEY = 'voicesite.recentlyArchived.v1';
 let localFallback = [], localUnavailable = false, adminSnapshots = [];
@@ -20,9 +21,30 @@ function rememberArchive(doc) {
 const $ = id => document.getElementById(id);
 let snapshots = [], current = null, mode = 'original', routeVersion = 0, saving = false;
 const player = createPlayer();
+let darkMode = false;
+try { darkMode = localStorage.getItem('voicesite.darkMode') === 'true'; } catch {}
+function syncPageTheme() {
+  $('original').contentWindow?.postMessage({voicesite:true, type:'theme', dark:darkMode}, '*');
+}
+function applyTheme() {
+  document.body.classList.toggle('dark-mode', darkMode);
+  $('dark-mode').setAttribute('aria-pressed', String(darkMode));
+  syncPageTheme();
+}
+$('dark-mode').onclick = () => {
+  darkMode = !darkMode;
+  try { localStorage.setItem('voicesite.darkMode', String(darkMode)); } catch {}
+  applyTheme();
+};
+$('original').addEventListener('load', syncPageTheme);
+window.addEventListener('message', event => {
+  if (event.source === $('original').contentWindow && event.data?.voicesite && event.data.type === 'ready') syncPageTheme();
+});
+applyTheme();
+
 const date = value => new Date(value).toLocaleString(undefined, {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'});
 async function api(url, options) { const response = await fetch(url, options); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.'); return result; }
-function screen(name) { if (name !== 'viewer') { player.reset(); closeUrlEditor(); } document.body.classList.toggle('viewing', name === 'viewer'); for (const id of ['home','admin','viewer','loading','error']) $(id).hidden = id !== name; }
+function screen(name) { if (name !== 'viewer') { setFavicon(); player.reset(); closeUrlEditor(); } document.body.classList.toggle('viewing', name === 'viewer'); for (const id of ['home','admin','viewer','loading','error']) $(id).hidden = id !== name; }
 function notify(message) { $('toast').textContent = message; $('toast').classList.add('visible'); setTimeout(() => $('toast').classList.remove('visible'), 2500); }
 function fail(error) { screen('error'); $('error-message').textContent = error.message; }
 const snapshotPath = (url, id) => `/${url}${id ? `#snapshot=${encodeURIComponent(id)}` : ''}`;
@@ -61,6 +83,7 @@ async function showSnapshot(id, version, preserveView = false) {
   $('reader-title').textContent = doc.title;
   player.setSnapshot(doc.id);
   document.title = `${doc.title} — Voicesite`;
+  void setFavicon(doc.id);
   $('header-title').textContent = doc.title;
   $('header-title').title = `${doc.title} — click to open another URL`;
   closeUrlEditor();

@@ -1,3 +1,4 @@
+import { loadFavicons } from './favicons.js';
 import express from 'express';
 import { createImageReading } from './image-reading.js';
 import { createRenditions, installRenditions } from './renditions.js';
@@ -14,7 +15,7 @@ import { normalizeUrl } from './fetch.js';
 import { createStore } from './store.js';
 import { installAdmin } from './admin.js';
 
-export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture, adminPassword = process.env.ADMIN_PASSWORD, speech = createSpeech(), speechDirectory, resumeSpeech = false, imageReading = createImageReading()} = {}) {
+export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/archive.sqlite3'), capturePage = capture, faviconLoader = loadFavicons, adminPassword = process.env.ADMIN_PASSWORD, speech = createSpeech(), speechDirectory, resumeSpeech = false, imageReading = createImageReading()} = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use('/api/snapshots/:id/speech-renditions', express.json({limit: '8mb'}));
@@ -57,6 +58,12 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
     try { const doc = await active.get(url); res.json({id: doc.id, unchanged: doc.unchanged, capturedAt: doc.capturedAt, url: doc.url, finalUrl: doc.finalUrl, title: doc.title, wordCount: doc.wordCount}); }
     catch (error) { res.status(422).json({error: error.message || 'This page could not be captured.'}); }
   });
+  app.get('/api/snapshots/:id/favicons', async (req, res) => {
+    const doc = store.get(req.params.id);
+    if (!doc) return res.status(404).json({error:'Snapshot not found.'});
+    const icons = await faviconLoader(doc);
+    res.set('Cache-Control', 'private, max-age=3600').json({icons});
+  });
   app.get('/api/snapshots/:id', (req, res) => {
     const doc = store.get(req.params.id); if (!doc) return res.status(404).json({error: 'Snapshot not found.'});
     const {originalHtml, ...data} = doc; res.json(data);
@@ -67,10 +74,22 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
     res.set('Cache-Control', 'no-store');
     const bridge = `<script>(() => {
       const send = (type, payload) => parent.postMessage({voicesite: true, type, ...payload}, '*');
+      const themeStyle = document.createElement('style');
+      themeStyle.textContent = \`
+        :root { color-scheme: dark !important; background: #181c19 !important; }
+        body, body *:not(img):not(video):not(canvas):not(svg):not(svg *) {
+          background-color: #181c19 !important; color: #e0e5dc !important;
+          border-color: #485146 !important; box-shadow: none !important; text-shadow: none !important;
+        }
+        body a, body a * { color: #b9d891 !important; }
+        body input, body textarea, body select, body button, body pre, body code { background-color: #262d27 !important; }
+        ::selection { background: #536b39 !important; color: #fff !important; }
+      \`;
       let buildToken;
       const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}));
       addEventListener('message', event => {
         if (event.source !== parent || !event.data?.voicesite) return;
+        if (event.data.type === 'theme') { if (event.data.dark === true) document.head.append(themeStyle); else themeStyle.remove(); }
         if (event.data.type === 'images') send('images', {urls:surface.images(), token:event.data.token});
         if (event.data.type === 'build') { buildToken = event.data.token; surface.build(event.data.imageText); }
         if (event.data.type === 'highlight') surface.highlight(event.data.index, event.data.mode);
@@ -81,7 +100,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   });
   const web = fileURLToPath(new URL('../web/', import.meta.url));
   // Content-addressed URLs prevent a CDN from mixing an old app bundle with new HTML.
-  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
+  const assets = ['app.js', 'style.css', 'reading.js', 'player.js', 'link-audio.js', 'favicon.js'].map(name => ({name, body: readFileSync(resolve(web, name))}));
   const revision = createHash('sha256').update(Buffer.concat(assets.map(a => a.body))).digest('hex').slice(0, 16);
   let shell = readFileSync(resolve(web, 'index.html'), 'utf8');
   for (const asset of assets) {

@@ -28,8 +28,6 @@ def analyze(encoded):
     global ocr, processor, model
     with Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))) as source:
         image = ImageOps.exif_transpose(source).convert('RGB')
-    if min(image.size) < 32:
-        return {'kind': 'decorative', 'text': ''}
     image.thumbnail((2400, 2400))
     if ocr is None:
         ocr = RapidOCR(params={'Rec.lang_type': LangRec.EN})
@@ -42,13 +40,15 @@ def analyze(encoded):
                 lines.append(text.strip())
                 area += float((max(box[:, 0]) - min(box[:, 0])) * (max(box[:, 1]) - min(box[:, 1])))
     text = '\n'.join(lines)
+    if len(text) > 19500:
+        text = text[:19500].rsplit(' ', 1)[0] + ' [Remaining image text omitted.]'
     # Text-dominant images (screenshots, scanned paragraphs, quotations).
     # This intentionally uses OCR confidence/density, not invented model text.
     density = area / (image.width * image.height)
     if (len(text.split()) >= 4 and density >= .06) or (len(lines) >= 3 and len(text) >= 30):
-        if len(text) > 19500:
-            text = text[:19500].rsplit(' ', 1)[0] + ' [Remaining image text omitted.]'
-        return {'kind': 'ocr', 'text': text}
+        return {'kind': 'ocr', 'text': text, 'ocrText': text}
+    if min(image.size) < 32:
+        return {'kind': 'ocr' if text else 'decorative', 'text': text, 'ocrText': text}
     if model is None:
         path = os.environ.get('IMAGE_CAPTION_MODEL', 'models/blip-image-captioning-base')
         processor = BlipProcessor.from_pretrained(path, local_files_only=True)
@@ -56,7 +56,7 @@ def analyze(encoded):
     with torch.inference_mode():
         output = model.generate(**processor(images=image, return_tensors='pt'), max_new_tokens=32, num_beams=3)
     caption = processor.decode(output[0], skip_special_tokens=True).strip()
-    return {'kind': 'caption', 'text': ' '.join(caption.split()[:25])}
+    return {'kind': 'caption', 'text': ' '.join(caption.split()[:25]), 'ocrText': text}
 
 
 for line in sys.stdin:

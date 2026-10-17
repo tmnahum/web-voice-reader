@@ -20,6 +20,7 @@ test('full-page generation saves in order, survives restart, and reuses every cl
   try {
     const job = manager.ensure('snapshot-1',input);
     assert.ok(job.total > 1);
+    assert.ok(job.chunks.every(c => c.duration === null));
     manager.generate(job.id);
     await until(()=>manager.status(job.id).status === 'complete');
     assert.equal(calls.length,job.total);
@@ -28,6 +29,7 @@ test('full-page generation saves in order, survives restart, and reuses every cl
     manager = createRenditions({directory:f.directory,speech:{generate:()=>assert.fail('Saved audio must not regenerate')}});
     assert.equal(manager.ensure('snapshot-1',input).id,job.id);
     assert.equal(manager.status(job.id).status,'complete');
+    assert.ok(manager.status(job.id).chunks.every(c => c.duration === result.duration));
     for(let i=0;i<job.total;i++) assert.deepEqual(await manager.chunk(job.id,i),result);
     const otherVersion = manager.ensure('snapshot-2',input);
     assert.notEqual(otherVersion.id,job.id);

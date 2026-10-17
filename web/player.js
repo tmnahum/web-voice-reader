@@ -1,4 +1,4 @@
-import { readingSurface } from './reading.js';
+import { readingSurface, readingProgress, formatReadingTime } from './reading.js';
 import { addLinkEcho } from './link-audio.js';
 const $ = id => document.getElementById(id);
 async function api(url, body) {
@@ -8,7 +8,7 @@ async function api(url, body) {
   return value;
 }
 export function createPlayer() {
-  let preparation = 0, preparing = false;
+  let preparation = 0, preparing = false, position = null, completed = false;
   let snapshot, mode = 'original', surface, words = [], index = 0, generation = 0, context = 0;
   let running = false, paused = false, speed = 1, audio, frame, objectUrl, poll;
   let rendition, loadingRendition, clip = 0, currentWords = [], pending = new Map();
@@ -27,15 +27,18 @@ export function createPlayer() {
   function renderReadTime() {
     const estimate = $('read-time');
     if (preparing || !words.length) {
-      estimate.textContent = preparing ? 'Estimating…' : '— min read';
-      estimate.title = 'Estimated total reading time for this view';
+      estimate.textContent = '0:00 / --:--';
+      estimate.title = 'Preparing audio timeline';
       return;
     }
-    const minutes = Math.max(1, Math.ceil(words.length / (180 * speed)));
-    const duration = minutes >= 60 ? `${Math.floor(minutes / 60)} hr${minutes % 60 ? ` ${minutes % 60} min` : ''}` : `${minutes} min`;
-    estimate.textContent = `≈${duration} read`;
-    estimate.title = `Estimated total at ${speed}×, based on 180 words per minute. Includes image descriptions and recognized text.`;
+    const progress = readingProgress(words.length, rendition?.chunks, index, position, completed);
+    const label = `${formatReadingTime(progress.current)} / ${progress.estimated ? '≈' : ''}${formatReadingTime(progress.total)}`;
+    if (estimate.textContent !== label) estimate.textContent = label;
+    estimate.title = progress.estimated
+      ? 'Audio position / estimated total. Ungenerated chunks use 180 words per minute; earlier estimates may also affect the position.'
+      : 'Audio position / total duration';
   }
+
   function renderSaved() {
     renderReadTime();
     $('play').disabled = preparing;
@@ -77,7 +80,7 @@ export function createPlayer() {
     if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = null;
     running = paused = false; pending.clear(); highlight(-1); button();
   }
-  function invalidate() { context++; rendition = loadingRendition = null; clearTimeout(poll); pending.clear(); }
+  function invalidate() { position = null; completed = false; context++; rendition = loadingRendition = null; clearTimeout(poll); pending.clear(); }
   function acceptWords(value) {
     if (JSON.stringify(value) !== JSON.stringify(words)) { invalidate(); words = value; }
     renderSaved();
@@ -94,7 +97,7 @@ export function createPlayer() {
         const url = urls[cursor++];
         try {
           const result = await api(`/api/snapshots/${encodeURIComponent(page)}/image-reading`, {url});
-          imageText[url] = result.kind === 'ocr' ? `Text in image: ${result.text}` : result.kind === 'caption' ? `Image: ${result.text}` : '';
+          imageText[url] = result;
         } catch { failed++; imageText[url] = 'Image description unavailable.'; }
         if (token === preparation) $('generate-speech').textContent = `Preparing images ${Object.keys(imageText).length}/${urls.length}…`;
       }
@@ -129,12 +132,17 @@ export function createPlayer() {
     const word = currentWords.find(w => audio.currentTime >= w.start && audio.currentTime < w.end);
     if (word) { index = rendition.chunks[clip].start + word.index; highlight(index); }
     else if (!paused) highlight(-1);
+    position = {chunk:clip, time:audio.currentTime};
+    renderReadTime();
     frame = requestAnimationFrame(tick);
   }
   async function playChunk(n, token, seekIndex) {
     if (token !== generation) return;
-    if (n >= rendition.chunks.length) { reset(); index = 0; renderSaved(); watchSaved(); return; }
+    if (n >= rendition.chunks.length) { reset(); completed = true; index = 0; renderSaved(); watchSaved(); return; }
+    audio?.pause(); audio = null;
     clip = n;
+    if (seekIndex === undefined) position = {chunk:n, time:0};
+    renderReadTime();
     try {
       {
         if (!rendition.chunks[n].ready) {
@@ -149,6 +157,7 @@ export function createPlayer() {
       const result = await pending.get(n);
       if (token !== generation) return;
       pending.delete(n); rendition.chunks[n].ready = true;
+      if (Number.isFinite(result.duration)) rendition.chunks[n].duration = result.duration;
       audio?.pause();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       const bytes = Uint8Array.from(atob(result.audio), c => c.charCodeAt(0));
@@ -156,6 +165,7 @@ export function createPlayer() {
       const nextAudio = new Audio(); audio = nextAudio; currentWords = result.words;
       await new Promise((resolve,reject) => { nextAudio.onloadedmetadata = resolve; nextAudio.onerror = () => reject(new Error('Saved audio could not load. Please retry.')); nextAudio.src = objectUrl; });
       if (token !== generation) return;
+      rendition.chunks[n].duration = audio.duration;
       audio.playbackRate = speed;
       if (seekIndex !== undefined) {
         const local = seekIndex - rendition.chunks[n].start;
@@ -177,7 +187,7 @@ export function createPlayer() {
   }
   async function start(at = 0) {
     reset();
-    index = at; running = true; button(); highlight(at);
+    completed = false; position = null; index = at; running = true; button(); highlight(at); renderReadTime();
     const token = generation;
     try {
       await ensure();
