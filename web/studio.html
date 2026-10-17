@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Effect Studio — Voicesite</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/studio.css"><script type="module" src="/studio.js"></script></head>
+<body>
+<header><a class="brand" href="/">▥ voicesite<span>.</span></a><span class="lab-label">THE LISTENING ROOM <span class="pulse"></span></span></header>
+<main>
+<div class="intro"><div><div class="eyebrow">WORDS HAVE A WAY OF SOUNDING.</div><h1>Effect <em>Studio.</em></h1><p>A little emphasis changes everything.<br>Shape the voice, then hear the difference.</p></div><div class="intro-note"><span>01 — WRITE</span><span>02 — SHAPE</span><span>03 — LISTEN</span></div></div>
+<div class="workspace">
+<section class="paper editor-panel"><div class="panel-heading"><h2>Your script</h2><span id="count">0 / 600</span></div>
+<div class="toolbar" role="group" aria-label="Mark selected text"><button data-mark="italic" title="Mark selection as italic"><i>I</i> Italics</button><button data-mark="caps">AA Caps</button><button data-mark="link">↗ Link</button><button id="example">Load example</button></div>
+<label class="sr-only" for="script">Script text</label><textarea id="script" spellcheck="false">I said *that* one, not the other one. This is REALLY important. You can find the details in [the full story]. A *small change* can make a big difference.</textarea>
+<p class="hint">Select words and mark them above, or type <code>*italics*</code>, <code>CAPS</code>, and <code>[links]</code>. Paste your own text to experiment.</p>
+<div class="preview-label">READING PREVIEW <span>Click a word to seek after rendering</span></div><div id="reading" aria-label="Reading preview"></div>
+<div class="legend"><span class="italic-dot">● Emphasis</span><span class="caps-dot">● Intensity</span><span class="link-dot">● Reference</span></div>
+</section>
+<section class="paper settings-panel"><div class="panel-heading"><h2>Shape the delivery</h2><button id="reset">Reset</button></div><div class="presets" role="group" aria-label="Effect presets"><button data-preset="gentle" aria-pressed="true">Gentle</button><button data-preset="expressive" aria-pressed="false">Expressive</button><button data-preset="obvious" aria-pressed="false">Obvious</button></div><div id="effects"></div><p class="hint">Overlapping marks combine pitch and volume, within safe limits. The longest duration and strongest echo win.</p></section>
+</div>
+<section class="paper listening"><div class="listen-heading"><div><div class="eyebrow">THE MOMENT OF TRUTH</div><h2>Listen to the difference.</h2></div><div class="generate-controls"><label>Voice <select id="voice"><option value="af_bella">Bella</option><option value="am_michael">Michael</option><option value="af_nicole">Nicole</option><option value="am_eric">Eric</option></select></label><button id="render" class="primary">Render comparison <span>→</span></button></div></div>
+<p id="status" role="status" aria-live="polite">Your first experiment is ready to render.</p>
+<div class="players"><div class="player"><div class="player-label"><strong>A <span>Original</span></strong><span id="original-duration">Untouched delivery</span></div><audio id="original-audio" controls preload="metadata"></audio><a id="original-download" hidden download="voicesite-original.wav">Download original ↗</a></div><div class="player processed"><div class="player-label"><strong>B <span>With effects</span></strong><span id="processed-duration">Your interpretation</span></div><audio id="processed-audio" controls preload="metadata"></audio><a id="processed-download" hidden download="voicesite-effects.wav">Download effects ↗</a></div></div>
+<div class="listen-footer"><label>Listen at <select id="speed"><option value=".75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><span>Word highlighting follows each version’s timing.</span><button id="save-settings">Export settings</button></div>
+</section>
+<footer>A workbench for finding the right voice.<span>Effect settings apply to this studio only.</span></footer>
+</main></body></html>

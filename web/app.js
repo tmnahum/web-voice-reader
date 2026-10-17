@@ -20,7 +20,6 @@ function rememberArchive(doc) {
 }
 const $ = id => document.getElementById(id);
 let snapshots = [], current = null, mode = 'original', routeVersion = 0, saving = false;
-const player = createPlayer();
 let darkMode = false;
 try { darkMode = localStorage.getItem('voicesite.darkMode') === 'true'; } catch {}
 function syncPageTheme() {
@@ -29,6 +28,7 @@ function syncPageTheme() {
 function applyTheme() {
   document.body.classList.toggle('dark-mode', darkMode);
   $('dark-mode').setAttribute('aria-pressed', String(darkMode));
+  $('dark-mode').title = `${darkMode ? 'Turn off' : 'Turn on'} dark mode for this page`;
   syncPageTheme();
 }
 $('dark-mode').onclick = () => {
@@ -41,6 +41,8 @@ window.addEventListener('message', event => {
   if (event.source === $('original').contentWindow && event.data?.voicesite && event.data.type === 'ready') syncPageTheme();
 });
 applyTheme();
+// Appearance controls remain usable even if audio initialization fails.
+const player = createPlayer();
 
 const date = value => new Date(value).toLocaleString(undefined, {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'});
 async function api(url, options) { const response = await fetch(url, options); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.'); return result; }

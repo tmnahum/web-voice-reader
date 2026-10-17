@@ -103,3 +103,13 @@ body.dark-mode #reader-content pre,body.dark-mode .control-bubble>button,body.da
 body.dark-mode #reader-mode[aria-pressed=true],body.dark-mode #dark-mode[aria-pressed=true],body.dark-mode .control-bubble>#play,body.dark-mode .speed-presets button[aria-pressed=true]{background:#b9d891;color:#181c19;border-color:#b9d891}
 body.dark-mode .archive-label{color:var(--muted)}
 @media(max-width:400px){.archive-header #versions{max-width:72px}.archive-header #dark-mode,.archive-header #reader-mode{padding:4px 5px}}
+
+/* Keep appearance controls together and visible as the page title shrinks. */
+.archive-header .view-controls{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.archive-header .view-controls button{min-height:26px;white-space:nowrap}
+.archive-header #dark-mode{background:#e8eddf;border-color:#b9c6a9;font-weight:600}
+.archive-header #dark-mode span{margin-right:3px;font-size:13px;vertical-align:-1px}
+body.dark-mode .archive-header #dark-mode[aria-pressed=true]{background:#b9d891;color:#181c19}
+@media(max-width:400px){.archive-header .view-controls{gap:3px}.archive-header #versions{max-width:60px}.archive-header #dark-mode span{display:none}}
+body.dark-mode .control-bubble>#generate-speech{background:#303a30;color:var(--ink)}
+body.dark-mode .control-bubble>#generate-speech:disabled{color:var(--muted)}

@@ -1,3 +1,4 @@
+import { installEffects } from './effects.js';
 import { loadFavicons } from './favicons.js';
 import express from 'express';
 import { createImageReading } from './image-reading.js';
@@ -20,6 +21,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   app.disable('x-powered-by');
   app.use('/api/snapshots/:id/speech-renditions', express.json({limit: '8mb'}));
   app.use('/api/snapshots/:id/image-reading', express.json({limit:'8mb'}));
+  app.use('/api/effect-studio/render', express.json({limit:'64kb'}));
   app.use(express.json({limit: '16kb'}));
   app.use((req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Referrer-Policy', 'no-referrer'); next(); });
   const renditions = createRenditions({speech, directory:speechDirectory, resume:resumeSpeech});
@@ -38,6 +40,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
     try { res.json(await speech.generate(req.body, controller.signal)); }
     catch (error) { if (!res.destroyed) res.status(422).json({error: error.message}); }
   });
+  installEffects(app, speech);
   const requireAdmin = installAdmin(app, adminPassword);
   app.get('/api/admin/snapshots', requireAdmin, (req, res) => res.json(store.list()));
   app.get('/api/snapshots', (req, res, next) => {
@@ -85,11 +88,15 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
         body input, body textarea, body select, body button, body pre, body code { background-color: #262d27 !important; }
         ::selection { background: #536b39 !important; color: #fff !important; }
       \`;
+      // Theme messages must work even when the saved page cannot initialize speech.
+      addEventListener('message', event => {
+        if (event.source !== parent || !event.data?.voicesite || event.data.type !== 'theme') return;
+        if (event.data.dark === true) document.head.append(themeStyle); else themeStyle.remove();
+      });
       let buildToken;
       const surface = (${readingSurface.toString()})(document.body, words => send('words', {words, token:buildToken}), index => send('read', {index}));
       addEventListener('message', event => {
         if (event.source !== parent || !event.data?.voicesite) return;
-        if (event.data.type === 'theme') { if (event.data.dark === true) document.head.append(themeStyle); else themeStyle.remove(); }
         if (event.data.type === 'images') send('images', {urls:surface.images(), token:event.data.token});
         if (event.data.type === 'build') { buildToken = event.data.token; surface.build(event.data.imageText); }
         if (event.data.type === 'highlight') surface.highlight(event.data.index, event.data.mode);
@@ -110,6 +117,7 @@ export function createApp({store = createStore(process.env.ARCHIVE_DB || 'data/a
   }
   const sendShell = (req, res) => res.set('Cache-Control', 'no-store').type('html').send(shell);
   app.get(['/', '/index.html'], sendShell);
+  app.get(['/effect-studio', '/effect-studio/'], (req, res) => res.set('Cache-Control','no-store').sendFile(resolve(web, 'studio.html')));
   app.use(express.static(web, {index: false, setHeaders: res => res.set('Cache-Control', 'no-cache')}));
   app.get('/assets/{*path}', (req, res) => res.status(404).send('Asset not found. Reload the page.'));
   app.get('/api/{*path}', (req, res) => res.status(404).json({error: 'Not found.'}));

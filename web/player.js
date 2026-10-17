@@ -163,6 +163,14 @@ export function createPlayer() {
       const bytes = Uint8Array.from(atob(result.audio), c => c.charCodeAt(0));
       objectUrl = URL.createObjectURL(new Blob([addLinkEcho(bytes, result.words, words, rendition.chunks[n].start)], {type:'audio/wav'}));
       const nextAudio = new Audio(); audio = nextAudio; currentWords = result.words;
+      const syncPlayback = () => {
+        // End-of-clip pauses must not prevent the next chunk from playing.
+        if (token !== generation || audio !== nextAudio || nextAudio.ended) return;
+        paused = nextAudio.paused;
+        button();
+      };
+      nextAudio.onplay = syncPlayback;
+      nextAudio.onpause = syncPlayback;
       await new Promise((resolve,reject) => { nextAudio.onloadedmetadata = resolve; nextAudio.onerror = () => reject(new Error('Saved audio could not load. Please retry.')); nextAudio.src = objectUrl; });
       if (token !== generation) return;
       rendition.chunks[n].duration = audio.duration;

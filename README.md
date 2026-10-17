@@ -111,3 +111,22 @@ The global recent list is available at `/admin/recently-archived`, linked from t
 Frontend CSS and JavaScript are served from content-hashed `/assets/<hash>/...` URLs with immutable caching; HTML uses `Cache-Control: no-store`. This prevents Cloudflare or browser caches from pairing a new page with an older app bundle.
 
 Resave comparison checks the complete captured document (including original HTML, saved CSS, reader output, and metadata), ignoring capture timestamps, download bookkeeping, CSP nonce attributes, and Cloudflare’s known per-request challenge script (Ray ID/timestamp). That script remains in replay HTML; only the comparison excludes it. All other original scripts, CSS, markup, and article content still participate in comparison. It compares against the latest snapshot for the same source URL, not older history. Live-linked asset bytes are not downloaded or compared; changing remote image/script bytes at the same URL is not detectable unless the captured document also changes.
+
+## Effect Studio
+
+Open `/effect-studio` (also linked in the home footer) to compare original Kokoro speech with adjustable processing. Paste up to 600 spoken characters, select text and use the Italics / Caps / Link buttons, or write `*emphasis*`, `ALL CAPS`, and `[link text]`. Nested marks combine. Caps detection excludes single letters and numbers; acronyms are treated as caps in this experimental studio. This is a small notation editor, not a full Markdown parser.
+
+Each format has an enable toggle, pitch lift (−4 to +4 semitones), volume (−6 to +6 dB), word length (100–140%), and echo (0–60%). Gentle, Expressive, and Obvious presets make comparison easy. Render again after editing; the underlying speech cache reuses unchanged text/voice. Text, voice, and settings persist in this browser. Both WAV versions and the settings JSON can be downloaded. Studio settings do not change archive playback.
+
+Install the processing environment before starting the server:
+
+```sh
+python3 -m venv .venv-effects
+.venv-effects/bin/pip install -r server/effects-requirements.txt
+```
+
+`EFFECTS_PYTHON` can override `.venv-effects/bin/python`. `POST /api/effect-studio/render` accepts `{voice, words, settings}` and returns `{original, processed}`, each containing WAV base64, duration, and word timestamps. It uses the same curated Kokoro voices as the reader. Processing is bounded to two concurrent requests and a 30-second processing timeout.
+
+Praat/Parselmouth analyzes the whole clip and uses overlap-add resynthesis with a smooth pitch arch over each marked word's existing pitch contour. Duration changes ramp over 25 ms at each edge. The exact piecewise-linear duration curve is integrated to remap every word boundary, including unmodified words that follow lengthened words. Output length is matched to that mapping; each player and click-to-seek uses its own timestamps. Pitch-tracking errors can still create artifacts, and word-level timing does not identify stressed syllables. Gain and short source-gated echoes follow resynthesis, with soft limiting above −1 dBFS. This is a listening workbench for tuning effects, not a claim of natural prosody.
+
+`pnpm test` includes parser, API validation, cross-origin rejection, and actual processing/timing tests when `.venv-effects` is installed.
